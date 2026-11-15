@@ -24,7 +24,9 @@ const NAME_RE = /^[^/\s\u0000-\u001f\u007f-][^/\u0000-\u001f\u007f]{0,63}$/; // 
  *  opStderr), nicht nur die erste Zeile: eine vorangestellte Hinweiszeile von op darf nicht zum Stopp führen
  *  */
 export const istKeinTresor = (meldung) => NICHT_DA.test(String(meldung ?? ''));
-const keinTresorFehler = (e) => istKeinTresor(e?.opStderr) || istKeinTresor(e?.message);
+// Fehler aus op-read.js sind schon eingeordnet (opEingeordnet): dort zählt nur `was`, nie der Text (Prozessfehler wie
+// eine Zeitüberschreitung bleiben ein Stopp, auch wenn stderr „isn't a vault“ enthält). Text nur für eigene Hüllen.
+const keinTresorFehler = (e) => (e?.opEingeordnet ? e.was === 'tresor' : (istKeinTresor(e?.opStderr) || istKeinTresor(e?.message)));
 
 const PREFIX_RE = /^[a-z0-9]{1,16}-$/i;
 

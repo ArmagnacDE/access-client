@@ -17,6 +17,7 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/sheets` | Sheets v4 (Lesen und Schreibwege) |
 | `access-client/op-vault` | 1Password-Tresore unter zwei Schreibweisen (mit und ohne Präfix) |
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
+| `access-client/op-read` | `op read`, `op vault get` und `op item get` (Kopf, Einmal-Code) an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
 
 Im Repo liegen keine Zugangsdaten. Google-Credentials erwartet das Paket unter `~/.config/gsheets/` (ersetzbar mit
@@ -54,6 +55,39 @@ export * from 'access-client/gmail';
 - **Entwurf mit Profil-Prüfung:** `createCheckedDraft({ token, expectedMailbox, to, subject, html, cc, reply })`
   legt genau einen Entwurf an, und nur, wenn das Gmail-Profil des Tokens `expectedMailbox` ist. Bei 5xx oder
   Verbindungsabbruch kein zweiter Versuch (der Entwurf kann trotzdem entstanden sein), Fehler mit „NICHT wiederholen“.
+
+## 1Password lesen: `op-read`
+
+```js
+import { waehleToken } from 'access-client/op-token';
+import { opRead, vaultGetMit, OpItemMissingError } from 'access-client/op-read';
+import { tresorSuche } from 'access-client/op-vault';
+
+const { token } = waehleToken(['~/.config/op/jobs.token']);
+const wert = await opRead({ ref: 'op://team-x/eintrag/credential', token }); // Buffer
+const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
+```
+
+- `opRead({ ref, token, exec?, timeoutMs?, maxBytes?, path? })` → `Buffer` (ohne Zeilenende, nie leer). Ein Aufruf,
+  kein Wiederholen.
+- Der Kindprozess bekommt genau `PATH`, `HOME` und `OP_SERVICE_ACCOUNT_TOKEN`. `PATH` ist fest
+  (`/usr/local/bin:/usr/bin:/bin`), nicht geerbt; ein anderer nur über `path`. Das Token steht nie in argv oder
+  `process.env`, und kein Name in argv darf wie ein Token aussehen. Der Verweis wird geprüft:
+  `op://<Tresor>/<Eintrag>[/<Abschnitt>]/<Feld>`, ohne `?`-Parameter.
+- Fehler: die maßgebliche `[ERROR]`-Zeile von stderr, gekürzt, Token geschwärzt; stdout nie (im Fehlerfall genullt).
+  Das ganze stderr hängt nicht aufzählbar als `opStderr` am Fehler. „Gibt es nicht“ ist `OpItemMissingError` mit
+  `was` = `tresor`, `eintrag` oder `feld`, mehrere Treffer `OpItemAmbiguousError`, alles andere `OpReadError`.
+  Eingeordnet wird nur bei normalem Exit-Code; Zeitüberschreitung, Signal oder Ausgabelimit sind immer ein Stopp.
+  Die übergebenen Namen werden vor der Einordnung aus der Meldung entfernt, damit ein Name wie „isn't a vault …“
+  nichts verschiebt.
+- `opVaultGet({ vault, token })` → `{ id, name }`; `vaultGetMit(token)` passt als `vaultGet` für `tresorSuche`.
+- `opItemHead({ vault, item, token })` → `{ id, title, fieldLabels }`: Kopf eines Eintrags ohne Werte (der
+  Antwortpuffer wird genullt; Kopien in Strings bleiben bis zur Speicherbereinigung im Speicher, nach außen geht
+  nichts). Ob der Titel passt, prüft der Aufrufer (`op item get` findet auch über Domain oder ID). Liegt ein Tresor
+  in zwei Schreibweisen vor: `opItemHead` als `holen` für `einEintrag`, erst danach lesen.
+- `opItemOtp({ vault, itemId, token })` → `Buffer` mit dem aktuellen Einmal-Code (nur Ziffern), nur über die
+  Eintrags-ID aus `opItemHead`.
+- Nur für Text-Geheimnisse: `op read` gibt Binärdateien verfälscht aus.
 
 ## access-read: Mails, Drive und Sheets nur lesen
 
@@ -144,6 +178,7 @@ Stand, kein Arbeitsverzeichnis.
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.1.0) `op-read`: `opRead`, `opVaultGet`, `vaultGetMit`, `opItemHead`, `opItemOtp` statt eigener `op`-Aufrufe je Werkzeug.
 - `google-auth`: `GOOGLE_CONFIG_DIR`; `getAccessTokenFromFile` und `getDelegatedToken` nehmen optional `fetchImpl`;
   `configDir()` exportiert.
 

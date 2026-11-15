@@ -19,6 +19,7 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
 | `access-client/op-read` | `op read`, `op vault get` und `op item get` (Kopf, Einmal-Code) an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
+| `access-client/read/google` | nur lesende Drive- und Sheets-Aufrufe mit übergebenem Token (nur GET auf feste Pfade), dieselben, die `access-read` nutzt; für Werkzeuge, die ihr Token selbst holen, z. B. OpenClaw-Lesewerkzeuge (ab v1.2.0) |
 
 Im Repo liegen keine Zugangsdaten. Google-Credentials erwartet das Paket unter `~/.config/gsheets/` (ersetzbar mit
 `GOOGLE_CONFIG_DIR`), 1Password-Tokens dort, wo die Konfiguration des Aufrufers sie nennt.
@@ -178,6 +179,7 @@ Stand, kein Arbeitsverzeichnis.
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.2.0) `read/google`: die Lese-Funktionen von `access-read` (`driveQuery`, `driveInfo`, `driveDownload`, `sheetTabs`, `sheetValues`, `idFrom`, `nameQuery`, `folderQuery`) als eigener Export.
 - neu (v1.1.0) `op-read`: `opRead`, `opVaultGet`, `vaultGetMit`, `opItemHead`, `opItemOtp` statt eigener `op`-Aufrufe je Werkzeug.
 - `google-auth`: `GOOGLE_CONFIG_DIR`; `getAccessTokenFromFile` und `getDelegatedToken` nehmen optional `fetchImpl`;
   `configDir()` exportiert.

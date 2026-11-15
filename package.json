@@ -1,0 +1,37 @@
+{
+  "name": "access-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google- und 1Password-Zugänge ohne Fremd-Abhängigkeiten: Anmeldung, Gmail mit Wächter (nie senden), Drive, Sheets, 1Password-Tresore und -Tokens; dazu der nur lesende Befehl access-read.",
+  "type": "module",
+  "exports": {
+    "./google-auth": "./src/google-auth.js",
+    "./gmail": "./src/gmail.js",
+    "./drive": "./src/drive.js",
+    "./sheets": "./src/sheets.js",
+    "./op-vault": "./src/op-vault.js",
+    "./op-token": "./src/op-token.js",
+    "./read": "./src/read/cli.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "access-read": "bin/access-read.mjs"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArmagnacDE/access-client.git"
+  }
+}

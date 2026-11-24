@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { SECURITY_SUBJECTS, SUBJECT_QUERY, isSecurityMail } from '../src/security-mail.js';
+import { FILTER_QUERY_MAX, SECURITY_SUBJECTS, SUBJECT_QUERIES, SUBJECT_QUERY, isSecurityMail } from '../src/security-mail.js';
 import { getAccessTokenFromFile, grantedScopesOf } from '../src/google-auth.js';
 import { tmpDir } from './helpers/tmpdir.mjs';
 
@@ -16,12 +16,17 @@ test('two-step: nur mit Anmelde-Bezug (authentication; 2-Step Verification steht
   assert.ok(!SECURITY_SUBJECTS.includes('two-step'));
 });
 
-test('Gmail-Filter: Einzelwörter mit + (dokumentierter exakter Worttreffer), Phrasen in Anführungszeichen; unter der Längengrenze', () => {
-  assert.match(SUBJECT_QUERY, / OR \+2FA OR /);
-  assert.match(SUBJECT_QUERY, / OR \+Sicherheitswarnung OR /);
-  assert.match(SUBJECT_QUERY, / OR "two-step authentication" OR /);
-  assert.match(SUBJECT_QUERY, / OR "Multi-Faktor" OR /, 'mit Bindestrich bleibt die Phrase in Anführungszeichen');
-  assert.ok(SUBJECT_QUERY.length < 1400, `Länge ${SUBJECT_QUERY.length}`);
+test('Gmail-Filter: Betreff auf mehrere Filter je < 1400 Zeichen, stabil (neue Phrasen nur im letzten), alle in Anführungszeichen', () => {
+  assert.ok(SUBJECT_QUERIES.length >= 2);
+  for (const q of SUBJECT_QUERIES) { assert.ok(q.length < FILTER_QUERY_MAX, `Länge ${q.length}`); assert.match(q, /^subject:\("[^+]*"\)$/); }
+  assert.match(SUBJECT_QUERIES[0], /^subject:\("password reset" OR .*"alerte de sécurité"\)$/, 'erster Filter = bisherige Liste bis zum alten Ende');
+  assert.match(SUBJECT_QUERY, / OR "2FA" OR /);
+});
+
+test('two-step und zweistufig mit Anmelde-Bezug wieder vollständig (reviewer S137)', () => {
+  for (const subject of ['Two-step verification turned off for your account', 'Complete your two-step verification', 'Two-Step Login enabled',
+    'Ihre zweistufige Authentifizierung wurde aktiviert', 'Veuillez vérifier votre identité'])
+    assert.equal(isSecurityMail({ from: 'x@example.com', subject }), true, subject);
 });
 
 const umleitung = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') }); };

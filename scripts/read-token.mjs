@@ -7,8 +7,8 @@
 //   node scripts/read-token.mjs finish --account <name> --url '<url>'        dasselbe, URL direkt
 //
 // Die Token-Datei entsteht unter ~/.config/gsheets (GOOGLE_CONFIG_DIR) mit dem Namen aus read.json, Rechte 600, nie
-// überschrieben. Ausgabe nie mit Token. Rückweg: die Datei löschen und in https://myaccount.google.com/permissions den
-// Zugriff der App entziehen.
+// überschrieben. Ausgabe nie mit Token. Rückweg: nur die Datei löschen. NICHT den Zugriff der App im Google-Konto
+// entziehen: gleicher OAuth-Client wie token.json, das träfe bei gleichem Konto auch den Haupt-Token (reviewer S137).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../src/google-auth.js';

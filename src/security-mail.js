@@ -27,20 +27,39 @@ export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your pa
   // „neue Anmeldung bei“, „nouvelle connexion“ allein: Veranstaltungen, Zugverbindungen (Codex S123 Folgerunde)
   'neues Gerät angemeldet', 'nouvelle connexion à votre compte', 'connexion depuis un nouvel appareil',
   // nie „zweistufige“, „deux facteurs“, „2-step“, „two-step“ allein: „zweistufige Destillation“, „les deux facteurs d’un
-  // grand Armagnac“, „2 step payment plan“ (reviewer S123), „Two-step distillation“ (S137, Fehltreffer aus v1.4.0); „two-step verification“ dazu sprengt die Filterlänge, Google meldet „2-Step Verification“ (in der Liste)
+  // grand Armagnac“, „2 step payment plan“ (reviewer S123), „Two-step distillation“ (S137, Fehltreffer aus v1.4.0)
   '2-step verification', 'Multi-Faktor', 'zweistufige Verifizierung', 'à deux facteurs', 'multifacteur',
   'verify your identity', 'Identität verifizieren', 'Identität bestätigen', 'vérifiez votre identité',
-  // BEWUSST NICHT (Filter-Länge < 1400): „Sicherheitshinweis“ (allein träfe Produktsicherheit/GPSR), „vérifier votre
-  // identité“, „zweistufige Authentifizierung“; A782 f deckt „Sicherheitswarnung“/„security alert“/„alerte de sécurité“
-  'alerte de sécurité', 'code de vérification']);
+  // BEWUSST NICHT: „Sicherheitshinweis“ (allein träfe Produktsicherheit/GPSR); A782 f deckt „Sicherheitswarnung“/
+  // „security alert“/„alerte de sécurité“
+  'alerte de sécurité', 'code de vérification',
+  // Ergänzung S137 (reviewer: Dropbox, Microsoft, Amazon, Atlassian, Bitwarden schreiben so); passt erst, seit der
+  // Betreff-Filter auf mehrere Filter verteilt wird. Neue Phrasen immer ans Ende: dann ändert sich nur der letzte Filter.
+  'two-step verification', 'two-step login', 'zweistufige Authentifizierung', 'vérifier votre identité']);
 /** Nur Absender, die ausschließlich Sicherheitsmails schicken (GitHub, Shopify u. ä. fängt der Betreff). */
 export const SECURITY_SENDERS = Object.freeze(['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com',
   'appleid@id.apple.com', 'security@facebookmail.com']);
 
-// Einzelwörter mit „+“ (laut Gmail-Hilfe exakter Worttreffer wie Anführungszeichen, aber kürzer: Filter bleibt unter 1400
-// Zeichen, S137, Codex); alles mit Leerzeichen, Bindestrich oder Satzzeichen bleibt Phrase in Anführungszeichen.
-const suchwort = (s) => (/^[\p{L}\p{N}]+$/u.test(s) ? `+${s}` : `"${s}"`);
-export const SUBJECT_QUERY = `subject:(${SECURITY_SUBJECTS.map(suchwort).join(' OR ')})`;
+/** Ganze Betreff-Suche (für Suchen der API und den Wächter; dort gilt die Filter-Längengrenze nicht). */
+export const SUBJECT_QUERY = `subject:(${SECURITY_SUBJECTS.map((s) => `"${s}"`).join(' OR ')})`;
+/** Längengrenze je Gmail-Filter, mit Abstand zur Grenze von Gmail (S137). */
+export const FILTER_QUERY_MAX = 1400;
+/**
+ * Dieselbe Liste auf mehrere Gmail-Filter verteilt, je unter FILTER_QUERY_MAX Zeichen (S137, reviewer: ein Filter hatte
+ * nur noch 8 Zeichen Luft und zwang zum Weglassen echter Merkmale). Gierig in Listenreihenfolge, also stabil: eine
+ * neue Phrase am Ende ändert nur den letzten Filter. Phrasen immer in Anführungszeichen (Rundlauf mit Gmail erprobt).
+ */
+export const SUBJECT_QUERIES = Object.freeze((() => {
+  const out = [];
+  let teil = [];
+  const q = (t) => `subject:(${t.map((s) => `"${s}"`).join(' OR ')})`;
+  for (const s of SECURITY_SUBJECTS) {
+    if (teil.length && q([...teil, s]).length >= FILTER_QUERY_MAX) { out.push(q(teil)); teil = []; }
+    teil.push(s);
+  }
+  if (teil.length) out.push(q(teil));
+  return out;
+})());
 export const SENDER_QUERY = SECURITY_SENDERS.join(' OR ');
 
 /** Zusatz für jede Gmail-Suche: schließt beide Filter-Merkmale aus. */

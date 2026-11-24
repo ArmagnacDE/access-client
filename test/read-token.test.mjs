@@ -74,6 +74,8 @@ test('finish: falsches Google-Konto, mehr Rechte, fremder state oder kein refres
     [{ json: { access_token: 'a', refresh_token: 'r', scope: `${READ_TOKEN_SCOPES.join(' ')} https://www.googleapis.com/auth/drive`, id_token: idToken('owner@example.org') } }, /andere Rechte/],
     [{ json: { access_token: 'a', scope: READ_TOKEN_SCOPES.join(' '), id_token: idToken('owner@example.org') } }, /refresh_token fehlt/],
     [{ ok: false, status: 400, json: { error: 'invalid_grant' } }, /invalid_grant/],
+    [{ json: { access_token: 'a', refresh_token: 'r', scope: READ_TOKEN_SCOPES.join(' ') } }, /anderem Konto/], // ohne id_token
+    [{ json: { access_token: 'a', refresh_token: 'r', scope: READ_TOKEN_SCOPES.filter((x) => !x.includes('spreadsheets')).join(' '), id_token: idToken('owner@example.org') } }, /ohne spreadsheets/],
   ];
   for (const [antwort, fehler] of faelle) {
     const { u, res } = await bisFinish(antwort);

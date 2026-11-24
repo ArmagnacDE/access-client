@@ -101,3 +101,29 @@ test('Abwesenheitsnotiz: Alarm bei neu/geändert, still bei aus, ohne Inhalt im 
   const alt = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false } }, { label: 'security-no-read' });
   assert.deepEqual(texte(alt, an), []);
 });
+
+// A800 a („Bei go: Der Mail-Wächter meldet auch … Senden-als und Reply-To“; Entscheidung Orchestrator 24.11. a):
+// EINE Leseausnahme zur Versand-Sperre, fest verdrahtet: GET genau users/<u>/settings/sendAs (Liste).
+import { readAbsender } from '../src/gmail-setup.js';
+import { assertNoSend, gmailGet, GmailSendBlockedError } from '../src/gmail.js';
+test('Absender-Liste: nur GET genau auf settings/sendAs, ohne Unterpfad; alles andere bleibt gesperrt', async () => {
+  const calls = [];
+  const f = async (url, init = {}) => { calls.push({ url, method: init.method ?? 'GET', body: init.body }); return { ok: true, status: 200, text: async () => JSON.stringify({ sendAs: [{ sendAsEmail: 'mail@x.example', isPrimary: true, replyToAddress: 'r@y.example' }] }) }; };
+  const l = await readAbsender({ token: 'T', mailbox: 'mail@x.example', fetchImpl: f, method: 'POST', path: 'settings/sendAs/x/verify' });
+  assert.deepEqual(l, [{ email: 'mail@x.example', replyTo: 'r@y.example' }]);
+  assert.deepEqual(calls, [{ url: 'https://gmail.googleapis.com/gmail/v1/users/mail%40x.example/settings/sendAs', method: 'GET', body: undefined }]);
+  for (const p of ['settings/sendAs', 'settings/sendAs/a@b.de', 'settings/sendAs/a@b.de/verify', 'settings%2FsendAs', 'settings/SENDAS']) {
+    assert.throws(() => assertNoSend(p), GmailSendBlockedError, p);
+  }
+  await assert.rejects(gmailGet({ token: 'T', mailbox: 'mail@x.example', path: 'settings/sendAs', fetchImpl: f }), GmailSendBlockedError);
+  await assert.rejects(readAbsender({ token: 'T', mailbox: 'x/../y@x.example', fetchImpl: f }), /ungültig/);
+});
+test('Senden-als und Reply-To: Alarm bei neu, still bei entfernt; Signatur ändert nichts', () => {
+  const S = (absender) => settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false }, absender }, { label: 'security-no-read' });
+  const grund = S([{ email: 'mail@x.example', replyTo: '' }]);
+  assert.deepEqual(texte(grund, S([{ email: 'mail@x.example', replyTo: '' }, { email: 'info@fremd.example', replyTo: '' }])), ['neu Senden als @fremd.example']);
+  assert.deepEqual(texte(grund, S([{ email: 'mail@x.example', replyTo: 'dieb@evil.example' }])), ['neu Senden als @x.example (Reply-To @evil.example)']);
+  assert.deepEqual(texte(S([{ email: 'mail@x.example', replyTo: '' }, { email: 'a@b.example', replyTo: '' }]), grund), []);
+  const alt = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false } }, { label: 'security-no-read' });
+  assert.deepEqual(texte(alt, grund), [], 'älterer Zustand ohne den Bereich lernt still');
+});

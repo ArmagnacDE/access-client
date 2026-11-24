@@ -160,6 +160,10 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
       put(`vacation:${sha(stabil(v))}`, `Abwesenheitsnotiz an (${fuer}, Betreff „${maskSubject(v.responseSubject, 24).replace(/[^\p{L} .:,!?-]/gu, '•')}“)`);
     } else put('vacation:aus', 'Abwesenheitsnotiz aus');
   }
+  // Senden-als mit Reply-To (A800 a): neue Adresse oder neue/geänderte Antwortadresse = Alarm; entfernt = still
+  for (const x of snap.absender ?? []) {
+    put(`absender:${sha(`${x.email}|${x.replyTo}`)}`, `Senden als @${domainOf(x.email)}${x.replyTo ? ` (Reply-To @${domainOf(x.replyTo)})` : ''}`, domainOf(x.replyTo || x.email));
+  }
   for (const x of snap.delegates ?? []) {
     const d = domainOf(x?.delegateEmail);
     put(`delegate:${sha(`${String(x?.delegateEmail).toLowerCase()}|${x?.verificationStatus}`)}`, `Delegierung an @${d} (${x?.verificationStatus ?? '?'})`, d);
@@ -171,11 +175,11 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
 // „accepted“ und invoicefetcher „pending“, automatische Weiterleitung aus): eine neue Adresse und eine eingeschaltete
 // oder umgestellte automatische Weiterleitung. Still bleiben Entfernen, Ausschalten und Statuswechsel einer bekannten
 // Adresse; eine bestätigte Adresse leitet erst mit Weiterleitung oder Filter weiter, und beide melden sich selbst.
-// Abwesenheitsnotiz ebenso: Alarm nur bei neu oder geändert (A800 a).
-const STILL_ENTFERNT = /^(forward|autoForwarding|vacation):/;
+// Abwesenheitsnotiz, Senden-als und Reply-To ebenso: Alarm nur bei neu oder geändert (A800 a).
+const STILL_ENTFERNT = /^(forward|autoForwarding|vacation|absender):/;
 const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus']);
 // Bereiche, die ein älterer Zustand noch nicht kennt, werden einmal still gelernt (Update von v1.4.0 ohne Fehlalarm)
-const NEUE_BEREICHE = ['vacation:'];
+const NEUE_BEREICHE = ['vacation:', 'absender:'];
 /** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
 export function diffSettings(alt, neu) {
   const out = [];

@@ -28,9 +28,8 @@ export const SECURITY_FILTERS = Object.freeze([
 const PFADE = new Set(['labels', 'settings/filters']);
 // Nur lesend für den Mail-Wächter (S114): Weiterleitungen, Delegierungen, IMAP/POP; nie schreibend erreichbar.
 // Nur Listen kommen leer, wenn sie leer sind (reviewer S114 nice 8); imap/pop/autoForwarding leer wäre ein Fehler.
-// Abwesenheitsnotiz (S123, Board A800 a): mail-jobs kann sie setzen, sie erreicht Kunden. BEWUSST NICHT: die
-// Absender-Einstellungen (Reply-To); deren Pfad lehnt die Versand-Sperre in jeder Form ab (assertNoSend,
-// test/gmail-send-guard.test.mjs), eine Ausnahme dafür entscheidet Sascha.
+// Abwesenheitsnotiz (S123, Board A800 a): mail-jobs kann sie setzen, sie erreicht Kunden. Absender-Einstellungen
+// (Reply-To) liest readAbsender unten, die einzige Ausnahme zur Versand-Sperre.
 const LISTEN = new Set(['settings/filters', 'settings/forwardingAddresses', 'settings/delegates']);
 const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates',
   'settings/vacation']);
@@ -90,6 +89,32 @@ export const isSecurityFilter = (f) => SECURITY_FILTERS.some((sf) => norm(f?.cri
  * Filter, Weiterleitungsadressen, automatische Weiterleitung, IMAP, POP, Delegierungen. Nur GET; ein Lese-Scope
  * (gmail.readonly) reicht für alle. Für den Mail-Wächter (S114).
  */
+/**
+ * Absender-Liste eines Postfachs (Senden-als mit Reply-To) für den Mail-Wächter. EINZIGE Ausnahme zur Versand-Sperre
+ * (assertNoSend lehnt den Pfad sonst ab): Board A800 a („Wächter meldet Senden-als und Reply-To“), Entscheidung
+ * Orchestrator 24.11.2026 a, nur Lesen. Methode GET und Pfad sind fest verdrahtet, kein Parameter des Aufrufers fließt
+ * in die Anfrage außer dem geprüften Postfach; Unterpfade (einzelne Adresse, verify) und jede andere Methode bleiben
+ * gesperrt. Liefert nur Adresse und Reply-To, keine Signatur, keinen Anzeigenamen.
+ */
+export async function readAbsender({ token, mailbox, fetchImpl = fetch }) {
+  if (!MAILBOX.test(String(mailbox))) throw new Error(`Gmail-Einrichtung: Postfach ${String(mailbox).slice(0, 60)} ungültig`);
+  assertNoSend(mailbox);
+  if (!token) throw new Error('Gmail-Einrichtung: kein Zugangstoken');
+  let res;
+  try {
+    res = await fetchImpl(ABSENDER_URL(mailbox), { method: 'GET', headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  } catch (e) { throw new Error(`Gmail-Einrichtung: ${mailbox} nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
+  const roh = await res.text().catch(() => null);
+  if (!res.ok) throw new Error(`Gmail-Einrichtung GET Absender in ${mailbox}: API ${res.status}`);
+  let j = null;
+  try { j = roh != null && roh.trim() === '' ? {} : JSON.parse(roh); } catch { j = null; }
+  if (!j || typeof j !== 'object') throw new Error('Gmail-Einrichtung GET Absender: Antwort unvollständig');
+  return (Array.isArray(LISTE_AUS(j)) ? LISTE_AUS(j) : []).map((x) => ({ email: String(x?.sendAsEmail ?? '').toLowerCase(), replyTo: String(x?.replyToAddress ?? '').trim().toLowerCase() }));
+}
+// A800 a, nur Lesen (SEND_ALLOW in test/gmail-send-guard.test.mjs): Pfad und Feldname der Gmail-Antwort
+const ABSENDER_URL = (mb) => `${USERS}${encodeURIComponent(mb)}/settings/sendAs`;
+const LISTE_AUS = (j) => j.sendAs;
+
 export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
   const get = (path) => call({ token, mailbox, path, fetchImpl });
   const labels = (await get('labels')).labels ?? [];
@@ -100,7 +125,8 @@ export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
   const pop = await get('settings/pop');
   const delegates = (await get('settings/delegates')).delegates ?? [];
   const vacation = await get('settings/vacation');
-  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates, vacation };
+  const absender = await readAbsender({ token, mailbox, fetchImpl });
+  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates, vacation, absender };
 }
 
 /**

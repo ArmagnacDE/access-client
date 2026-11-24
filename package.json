@@ -1,6 +1,6 @@
 {
   "name": "access-client",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "private": true,
   "description": "Google- und 1Password-Zugänge ohne Fremd-Abhängigkeiten: Anmeldung, Gmail mit Wächter (nie senden), Drive, Sheets, 1Password-Tresore und -Tokens; dazu der nur lesende Befehl access-read und der Entwurfs-Befehl access-mail (nie senden).",
   "type": "module",

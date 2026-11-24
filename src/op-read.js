@@ -270,3 +270,36 @@ export async function opItemOtp({ vault, itemId, token, exec = execFile, timeout
 
 /** vaultGet-Funktion für tresorSuche({ vaultGet }) mit festem Token. */
 export const vaultGetMit = (token, optionen = {}) => (vault) => opVaultGet({ ...optionen, vault, token });
+
+// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen.
+const AUSGABE_NAME = /^[^\u0000-\u001f\u007f]{1,200}$/;
+const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) ? x : null);
+
+/**
+ * Tresore, die das Token sieht: `op vault list --format json`, davon nur die Namen (sortiert). Für die Diagnose
+ * (access-read access --check, S110 (Diagnose Konten und Scopes)); liest keine Einträge.
+ * @returns {Promise<string[]>}
+ */
+export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['vault', 'list', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 256 * 1024, path, home, was: 'Tresorliste', namen: [] });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  const namen = Array.isArray(j) ? j.map((v) => ausgabeText(v?.name)) : null;
+  if (!namen || namen.some((n) => n == null)) throw new OpReadError('1Password: Antwort ist keine Tresorliste');
+  return namen.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Wer ist das Token: `op whoami --format json`, davon nur Typ (z. B. SERVICE_ACCOUNT), Adresse und Konto-URL.
+ * @returns {Promise<{ typ: string, email: string|null, url: string|null }>}
+ */
+export async function opWhoami({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['whoami', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [] });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  const typ = j && !Array.isArray(j) ? ausgabeText(j.user_type) : null;
+  if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
+  return { typ, email: ausgabeText(j.email), url: ausgabeText(j.url) };
+}

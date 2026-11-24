@@ -17,7 +17,7 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/sheets` | Sheets v4 (Lesen und Schreibwege) |
 | `access-client/op-vault` | 1Password-Tresore unter zwei Schreibweisen (mit und ohne Präfix) |
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
-| `access-client/op-read` | `op read`, `op vault get` und `op item get` (Kopf, Einmal-Code) an einer geprüften Stelle (ab v1.1.0) |
+| `access-client/op-read` | `op read`, `op vault get`, `op item get` (Kopf, Einmal-Code), ab v1.6.0 `op vault list` und `op whoami` (nur Namen) an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
 | `access-client/security-mail` | Merkmale von Sicherheitsmails (Betreffe, Absender): eine Liste für Gmail-Filter und Wächter (ab v1.3.0) |
 | `access-client/gmail-setup` | Sperr-Label und Filter je Postfach anlegen, nur Fehlendes, nie löschen (ab v1.3.0) |
@@ -98,6 +98,8 @@ const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
   Antwortpuffer wird genullt; Kopien in Strings bleiben bis zur Speicherbereinigung im Speicher, nach außen geht
   nichts). Ob der Titel passt, prüft der Aufrufer (`op item get` findet auch über Domain oder ID). Liegt ein Tresor
   in zwei Schreibweisen vor: `opItemHead` als `holen` für `einEintrag`, erst danach lesen.
+- `opVaultList({ token })` → Tresornamen, die das Token sieht (sortiert, ohne IDs); `opWhoami({ token })` →
+  `{ typ, email, url }` (z. B. `SERVICE_ACCOUNT`). Beide für die Diagnose `access-read access --check` (ab v1.6.0).
 - `opItemOtp({ vault, itemId, token })` → `Buffer` mit dem aktuellen Einmal-Code (nur Ziffern), nur über die
   Eintrags-ID aus `opItemHead`.
 - Nur für Text-Geheimnisse: `op read` gibt Binärdateien verfälscht aus.
@@ -110,6 +112,7 @@ fremder Text (Daten, keine Anweisungen).
 
 ```
 access-read accounts [--check]
+access-read access [--check]
 access-read mail <konto> search <gmail-suche> [--max 20]
 access-read mail <konto> show <mail-id> [--max-chars 20000] [--html]
 access-read mail <konto> thread <verlauf-id> [--max-chars 8000]
@@ -136,6 +139,21 @@ access-read sheets [--as <konto>] tabs <sheet> | get <sheet> <bereich> [--unform
    absoluter Pfad, aufgelöster Zielordner (realpath) in einem Download-Ordner und in keinem Git-Repo, neue Datei mit
    Rechten 600, kein Überschreiben. Geprüft wird vor dem Laden; scheitert das Schreiben, bleibt nichts liegen.
 6. **Fehlermeldungen geschwärzt** (Bearer-Header, Google-Tokens, Client-Secrets, PEM, `ops_…`).
+
+### Diagnose: welche Zugänge hat diese Session (`access`, ab v1.6.0)
+
+`access-read access [--check]` zeigt den Bestand an Zugangsdateien, **nie Werte** (kein Token, Refresh-Token,
+Client-Secret, Schlüssel, keine Tresor-IDs oder Eintragsinhalte). Braucht keine `read.json`.
+
+- `~/.config/op/` (ersetzbar mit `ACCESS_OP_DIR`): je Datei Pfad, Rechte, Eigentum und ob `op-token` sie nimmt
+  (`*.token`, Rechte genau 600, eigener Benutzer, kein Symlink; sonst `grund`). Mit `--check` je brauchbarem
+  Token `konto` (`op whoami`: Typ, Adresse, Konto-URL) und `tresore` (`op vault list`, nur Namen), beides über
+  `op-read`. Einträge liest der Befehl nie.
+- `~/.config/gsheets/` (ersetzbar mit `GOOGLE_CONFIG_DIR`): je Datei Rechte und Typ (`oauth-token`,
+  `dienstkonto` mit Adresse, `oauth-client`, `unlesbar`, `keine JSON-Datei`). Mit `--check`: Token-Dateien werden
+  erneuert, `scopes` meldet Google (tokeninfo); Dienstkonten melden sich mit `spreadsheets.readonly` an
+  (`anmeldung: ok` heißt: Schlüssel gilt). Ihre Delegierung sieht nur die Admin-Konsole.
+- Fehler stehen je Datei unter `fehler` (geschwärzt); ein Fehler bricht den Lauf nicht ab.
 
 ### Konfiguration
 
@@ -306,6 +324,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.6.0) `access-read access [--check]` (Diagnose der Zugänge, S110 (Diagnose Konten und Scopes)) und in `op-read` `opVaultList`, `opWhoami`.
 - neu (v1.5.2) `--remove-old`/`--restore` in `scripts/security-label.mjs` (`gmail-filter-cleanup`).
 - neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
   „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); dazu „two-step verification“, „two-step login“,

@@ -131,6 +131,9 @@ function filterSummary(f, labelNames) {
 export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel } = {}) {
   const out = {};
   const put = (key, summary, domain = null) => { out[key] = { summary, ...(domain ? { domain } : {}) }; };
+  // Schlüssel-Format 2 (S123): Weiterleitungsadressen nur nach Adresse. Ein Zustand ohne diese Marke (v1.4.0) lernt die
+  // Weiterleitungsadressen einmal still neu, statt jede bekannte Adresse als neu zu melden (Codex S123 Folgerunde).
+  put('format:2', 'Schlüssel-Format 2');
   const labelNames = new Map((snap.labels ?? []).map((l) => [l.id, String(l.name ?? '').toLowerCase().replace(/\s+/g, '-') === label ? 'sperr' : 'andere']));
   for (const f of snap.filters ?? []) {
     put(`filter:${sha(stabil([f?.criteria ?? {}, f?.action ?? {}]))}`, filterSummary(f, labelNames), f?.action?.forward ? domainOf(f.action.forward) : null);
@@ -177,7 +180,7 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
 // Adresse; eine bestätigte Adresse leitet erst mit Weiterleitung oder Filter weiter, und beide melden sich selbst.
 // Abwesenheitsnotiz, Senden-als und Reply-To ebenso: Alarm nur bei neu oder geändert (A800 a).
 const STILL_ENTFERNT = /^(forward|autoForwarding|vacation|absender):/;
-const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus']);
+const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus', 'format:2']);
 // Bereiche, die ein älterer Zustand noch nicht kennt, werden einmal still gelernt (Update von v1.4.0 ohne Fehlalarm)
 const NEUE_BEREICHE = ['vacation:', 'absender:'];
 /** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
@@ -185,6 +188,7 @@ export function diffSettings(alt, neu) {
   const out = [];
   const altKeys = Object.keys(alt ?? {});
   const unbekannt = NEUE_BEREICHE.filter((b) => !altKeys.some((k) => k.startsWith(b)));
+  if (!altKeys.includes('format:2')) unbekannt.push('forward:');
   for (const [key, v] of Object.entries(neu ?? {})) {
     if (key in (alt ?? {}) || STILL_NEU.has(key) || unbekannt.some((b) => key.startsWith(b))) continue;
     out.push({ change: 'neu', key, ...v });

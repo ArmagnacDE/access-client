@@ -23,7 +23,8 @@ export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your pa
   'vérifiez votre adresse e-mail', 'confirmez votre adresse e-mail',
   'new password', 'nouveau mot de passe', 'réinitialiser votre mot de passe', 'mot de passe oublié',
   // nur mit Anmelde-Bezug (Codex S123 #1): „neues Gerät“, „nouvel appareil“ allein träfen Liefer- und Versandmails
-  'neue Anmeldung bei', 'neues Gerät angemeldet', 'nouvelle connexion', 'connexion depuis un nouvel appareil',
+  // „neue Anmeldung bei“, „nouvelle connexion“ allein: Veranstaltungen, Zugverbindungen (Codex S123 Folgerunde)
+  'neues Gerät angemeldet', 'nouvelle connexion à votre compte', 'connexion depuis un nouvel appareil',
   // nie „zweistufige“ allein: „zweistufige Destillation“
   '2-step', 'Multi-Faktor', 'zweistufige Verifizierung', 'deux facteurs', 'multifacteur',
   'verify your identity', 'Identität verifizieren', 'Identität bestätigen', 'vérifiez votre identité',

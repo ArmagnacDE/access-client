@@ -19,7 +19,7 @@ test('Merkmal-Liste: alle Arten aus A782 a auch in Varianten und auf Französisc
     // b neues Passwort
     'Your new password', 'Votre nouveau mot de passe', 'Réinitialiser votre mot de passe', 'Mot de passe oublié ?',
     // c new login / device
-    'Neue Anmeldung bei Wise', 'Neues Gerät angemeldet', 'Nouvelle connexion à votre compte', 'Connexion depuis un nouvel appareil',
+    'Neues Gerät angemeldet', 'Nouvelle connexion à votre compte', 'Connexion depuis un nouvel appareil',
     // d multi-factor / two-step
     'Multi-Faktor-Authentifizierung aktiviert', 'Zweistufige Verifizierung aktiviert', '2-step verification turned on',
     'Authentification à deux facteurs activée', 'Authentification multifacteur',
@@ -32,7 +32,7 @@ test('Merkmal-Liste: alle Arten aus A782 a auch in Varianten und auf Französisc
   for (const subject of ['Bestellbestätigung #1042', 'Votre commande est expédiée', 'Neues Armagnac-Paket', 'Passwortgeschützte Datei',
     'Confirmez votre adresse de livraison pour votre commande', 'Vérifiez votre adresse de facturation', 'Liefertermin für Ihr neues Gerät',
     'Votre nouvel appareil est expédié', 'Zweistufige Destillation im Alambic', 'Sicherheitshinweis zum Produkt (GPSR)',
-    'Neue Anmeldung zur Verkostung', 'Neues Gerät für das Lager']) {
+    'Neue Anmeldung zur Verkostung', 'Neues Gerät für das Lager', 'Neue Anmeldung bei unserer Verkostung', 'Nouvelle connexion ferroviaire Paris Bordeaux']) {
     assert.equal(isSecurityMail({ from: 'x@y.example', subject }), false, subject);
   }
   assert.ok(SUBJECT_QUERY.length < 1400, `Gmail-Filter bleibt unter der Längengrenze (${SUBJECT_QUERY.length})`);
@@ -126,4 +126,15 @@ test('Senden-als und Reply-To: Alarm bei neu, still bei entfernt; Signatur ände
   assert.deepEqual(texte(S([{ email: 'mail@x.example', replyTo: '' }, { email: 'a@b.example', replyTo: '' }]), grund), []);
   const alt = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false } }, { label: 'security-no-read' });
   assert.deepEqual(texte(alt, grund), [], 'älterer Zustand ohne den Bereich lernt still');
+});
+
+test('Update von v1.4.0: bekannte Weiterleitungsadressen im alten Schlüssel-Format melden nichts', async () => {
+  const { createHash } = await import('node:crypto');
+  const h = (x) => createHash('sha256').update(x).digest('hex').slice(0, 16);
+  const neu = stand([LEX, INV]);
+  const alt = Object.fromEntries(Object.entries(neu).filter(([k]) => !k.startsWith('forward:') && k !== 'format:2'));
+  alt[`forward:${h(`${LEX.forwardingEmail}|accepted`)}`] = { summary: 'Weiterleitungsadresse @lexware.email (accepted)', domain: 'lexware.email' };
+  alt[`forward:${h(`${INV.forwardingEmail}|pending`)}`] = { summary: 'Weiterleitungsadresse @invoicefetcher.email (pending)', domain: 'invoicefetcher.email' };
+  assert.deepEqual(texte(alt, neu), []);
+  assert.deepEqual(texte(neu, stand([LEX, INV, { forwardingEmail: 'neu@evil.example', verificationStatus: 'pending' }])), ['neu Weiterleitungsadresse @evil.example (pending)'], 'ab Format 2 wieder Alarm');
 });

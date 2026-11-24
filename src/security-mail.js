@@ -25,8 +25,9 @@ export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your pa
   // nur mit Anmelde-Bezug (Codex S123 #1): „neues Gerät“, „nouvel appareil“ allein träfen Liefer- und Versandmails
   // „neue Anmeldung bei“, „nouvelle connexion“ allein: Veranstaltungen, Zugverbindungen (Codex S123 Folgerunde)
   'neues Gerät angemeldet', 'nouvelle connexion à votre compte', 'connexion depuis un nouvel appareil',
-  // nie „zweistufige“ allein: „zweistufige Destillation“
-  '2-step', 'Multi-Faktor', 'zweistufige Verifizierung', 'deux facteurs', 'multifacteur',
+  // nie „zweistufige“, „deux facteurs“, „2-step“ allein: „zweistufige Destillation“, „les deux facteurs d’un grand
+  // Armagnac“, „2 step payment plan“ (reviewer S123)
+  '2-step verification', 'Multi-Faktor', 'zweistufige Verifizierung', 'à deux facteurs', 'multifacteur',
   'verify your identity', 'Identität verifizieren', 'Identität bestätigen', 'vérifiez votre identité',
   // BEWUSST NICHT (Filter-Länge < 1400): „Sicherheitshinweis“ (allein träfe Produktsicherheit/GPSR), „vérifier votre
   // identité“, „zweistufige Authentifizierung“; A782 f deckt „Sicherheitswarnung“/„security alert“/„alerte de sécurité“

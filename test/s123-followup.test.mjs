@@ -32,7 +32,8 @@ test('Merkmal-Liste: alle Arten aus A782 a auch in Varianten und auf Französisc
   for (const subject of ['Bestellbestätigung #1042', 'Votre commande est expédiée', 'Neues Armagnac-Paket', 'Passwortgeschützte Datei',
     'Confirmez votre adresse de livraison pour votre commande', 'Vérifiez votre adresse de facturation', 'Liefertermin für Ihr neues Gerät',
     'Votre nouvel appareil est expédié', 'Zweistufige Destillation im Alambic', 'Sicherheitshinweis zum Produkt (GPSR)',
-    'Neue Anmeldung zur Verkostung', 'Neues Gerät für das Lager', 'Neue Anmeldung bei unserer Verkostung', 'Nouvelle connexion ferroviaire Paris Bordeaux']) {
+    'Neue Anmeldung zur Verkostung', 'Neues Gerät für das Lager', 'Neue Anmeldung bei unserer Verkostung', 'Nouvelle connexion ferroviaire Paris Bordeaux',
+    'Les deux facteurs qui font un grand Armagnac', '2 step payment plan']) {
     assert.equal(isSecurityMail({ from: 'x@y.example', subject }), false, subject);
   }
   assert.ok(SUBJECT_QUERY.length < 1400, `Gmail-Filter bleibt unter der Längengrenze (${SUBJECT_QUERY.length})`);
@@ -86,7 +87,7 @@ test('Token-Abruf: keine Weiterleitung folgen, Fehler lesbar', async () => {
 });
 
 // A800 a (Sascha 24.11.2026, Zusatz zu S123): mail-jobs kann Abwesenheitsnotizen setzen (erreichen Kunden); der
-// Wächter meldet eine neue oder geänderte. Absender-Einstellungen (Reply-To) bewusst nicht: Versand-Sperre, Frage an Sascha.
+// Wächter meldet eine neue oder geänderte. Senden-als/Reply-To: Tests weiter unten (readAbsender).
 const MIT = (vacation) => settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false }, vacation }, { label: 'security-no-read' });
 test('Abwesenheitsnotiz: Alarm bei neu/geändert, still bei aus, ohne Inhalt im Zustand; alter Zustand lernt still', () => {
   const grund = MIT({ enableAutoReply: false });
@@ -117,6 +118,10 @@ test('Absender-Liste: nur GET genau auf settings/sendAs, ohne Unterpfad; alles a
   }
   await assert.rejects(gmailGet({ token: 'T', mailbox: 'mail@x.example', path: 'settings/sendAs', fetchImpl: f }), GmailSendBlockedError);
   await assert.rejects(readAbsender({ token: 'T', mailbox: 'x/../y@x.example', fetchImpl: f }), /ungültig/);
+  // kaputte Antwort ist ein Fehler, keine leere Liste (reviewer S123 B2)
+  for (const body of ['', '{}', '{"sendAs":"x"}', '{"sendAs":[]}', '{"sendAs":[{}]}']) {
+    await assert.rejects(readAbsender({ token: 'T', mailbox: 'mail@x.example', fetchImpl: async () => ({ ok: true, status: 200, text: async () => body }) }), /unvollständig/, body);
+  }
 });
 test('Senden-als und Reply-To: Alarm bei neu, still bei entfernt; Signatur ändert nichts', () => {
   const S = (absender) => settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false }, absender }, { label: 'security-no-read' });
@@ -137,4 +142,12 @@ test('Update von v1.4.0: bekannte Weiterleitungsadressen im alten Schlüssel-For
   alt[`forward:${h(`${INV.forwardingEmail}|pending`)}`] = { summary: 'Weiterleitungsadresse @invoicefetcher.email (pending)', domain: 'invoicefetcher.email' };
   assert.deepEqual(texte(alt, neu), []);
   assert.deepEqual(texte(neu, stand([LEX, INV, { forwardingEmail: 'neu@evil.example', verificationStatus: 'pending' }])), ['neu Weiterleitungsadresse @evil.example (pending)'], 'ab Format 2 wieder Alarm');
+});
+
+test('Update: still übernommene Bereiche stehen im Log (learnedSilently)', async () => {
+  const { learnedSilently } = await import('../src/mail-guard.js');
+  const alt = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false } }, { label: 'security-no-read' });
+  const neu = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false }, vacation: { enableAutoReply: true, responseSubject: 'x' }, absender: [{ email: 'mail@x.example', replyTo: 'r@evil.example' }] }, { label: 'security-no-read' });
+  assert.deepEqual(learnedSilently(alt, neu).map((v) => v.summary).sort(), ['Abwesenheitsnotiz an (an alle, Betreff „x“)', 'Senden als @x.example (Reply-To @evil.example)']);
+  assert.deepEqual(learnedSilently(neu, neu), []);
 });

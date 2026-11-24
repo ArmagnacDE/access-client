@@ -109,7 +109,11 @@ export async function readAbsender({ token, mailbox, fetchImpl = fetch }) {
   let j = null;
   try { j = roh != null && roh.trim() === '' ? {} : JSON.parse(roh); } catch { j = null; }
   if (!j || typeof j !== 'object') throw new Error('Gmail-Einrichtung GET Absender: Antwort unvollständig');
-  return (Array.isArray(LISTE_AUS(j)) ? LISTE_AUS(j) : []).map((x) => ({ email: String(x?.sendAsEmail ?? '').toLowerCase(), replyTo: String(x?.replyToAddress ?? '').trim().toLowerCase() }));
+  // Gmail liefert die Primäradresse immer: leer oder keine Liste ist eine kaputte Antwort, kein „keine Absender“
+  // (sonst lernte der Wächter den Bereich im nächsten Lauf still neu, reviewer S123 B2)
+  const liste = LISTE_AUS(j);
+  if (!Array.isArray(liste) || !liste.length || liste.some((x) => typeof x?.sendAsEmail !== 'string' || !x.sendAsEmail.includes('@'))) throw new Error('Gmail-Einrichtung GET Absender: Antwort unvollständig');
+  return liste.map((x) => ({ email: x.sendAsEmail.toLowerCase(), replyTo: String(x?.replyToAddress ?? '').trim().toLowerCase() }));
 }
 // A800 a, nur Lesen (SEND_ALLOW in test/gmail-send-guard.test.mjs): Pfad und Feldname der Gmail-Antwort
 const ABSENDER_URL = (mb) => `${USERS}${encodeURIComponent(mb)}/settings/sendAs`;

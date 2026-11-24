@@ -183,12 +183,21 @@ const STILL_ENTFERNT = /^(forward|autoForwarding|vacation|absender):/;
 const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus', 'format:2']);
 // Bereiche, die ein älterer Zustand noch nicht kennt, werden einmal still gelernt (Update von v1.4.0 ohne Fehlalarm)
 const NEUE_BEREICHE = ['vacation:', 'absender:'];
+const unbekannteBereiche = (alt) => {
+  const altKeys = Object.keys(alt ?? {});
+  const u = NEUE_BEREICHE.filter((b) => !altKeys.some((k) => k.startsWith(b)));
+  if (!altKeys.includes('format:2')) u.push('forward:');
+  return u;
+};
+/** Was ein Lauf still übernimmt, weil der Zustand den Bereich noch nicht kannte (Update); fürs Log (reviewer S123). */
+export function learnedSilently(alt, neu) {
+  const u = unbekannteBereiche(alt);
+  return Object.entries(neu ?? {}).filter(([k]) => !(k in (alt ?? {})) && !STILL_NEU.has(k) && u.some((b) => k.startsWith(b))).map(([, v]) => v);
+}
 /** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
 export function diffSettings(alt, neu) {
   const out = [];
-  const altKeys = Object.keys(alt ?? {});
-  const unbekannt = NEUE_BEREICHE.filter((b) => !altKeys.some((k) => k.startsWith(b)));
-  if (!altKeys.includes('format:2')) unbekannt.push('forward:');
+  const unbekannt = unbekannteBereiche(alt);
   for (const [key, v] of Object.entries(neu ?? {})) {
     if (key in (alt ?? {}) || STILL_NEU.has(key) || unbekannt.some((b) => key.startsWith(b))) continue;
     out.push({ change: 'neu', key, ...v });
@@ -311,7 +320,7 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
   const truncated = (!baseline && gesendet.truncated) || kandidaten.truncated;
   if (truncated) findings.push({ kind: 'error', detail: `zu viele Treffer (über ${maxMessages} in einer Stunde), Rest dieser Stunde nicht geprüft` });
   return {
-    mailbox, baseline, findings, truncated, incomplete: truncated,
+    mailbox, baseline, findings, truncated, incomplete: truncated, learned: baseline ? [] : learnedSilently(state.settings, items),
     counts: { filters: snap.filters.length, settings: Object.keys(items).length, sentChecked, fingerprints: Object.keys(known).length, securityChecked, spam, findings: findings.length, ...(baseline && gesendet.truncated ? { lernenGekuerzt: true } : {}) },
     state: { version: 1, mailbox, lastRun: now, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
   };

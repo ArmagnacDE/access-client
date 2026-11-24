@@ -28,8 +28,12 @@ export const SECURITY_FILTERS = Object.freeze([
 const PFADE = new Set(['labels', 'settings/filters']);
 // Nur lesend für den Mail-Wächter (S114): Weiterleitungen, Delegierungen, IMAP/POP; nie schreibend erreichbar.
 // Nur Listen kommen leer, wenn sie leer sind (reviewer S114 nice 8); imap/pop/autoForwarding leer wäre ein Fehler.
+// Abwesenheitsnotiz (S123, Board A800 a): mail-jobs kann sie setzen, sie erreicht Kunden. BEWUSST NICHT: die
+// Absender-Einstellungen (Reply-To); deren Pfad lehnt die Versand-Sperre in jeder Form ab (assertNoSend,
+// test/gmail-send-guard.test.mjs), eine Ausnahme dafür entscheidet Sascha.
 const LISTEN = new Set(['settings/filters', 'settings/forwardingAddresses', 'settings/delegates']);
-const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates']);
+const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates',
+  'settings/vacation']);
 const MAILBOX = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
 async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
@@ -95,7 +99,8 @@ export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
   const imap = await get('settings/imap');
   const pop = await get('settings/pop');
   const delegates = (await get('settings/delegates')).delegates ?? [];
-  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates };
+  const vacation = await get('settings/vacation');
+  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates, vacation };
 }
 
 /**

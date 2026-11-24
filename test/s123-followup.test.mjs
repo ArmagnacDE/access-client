@@ -84,3 +84,20 @@ test('Token-Abruf: keine Weiterleitung folgen, Fehler lesbar', async () => {
   await assert.rejects(getDelegatedToken({ datei, sub: 'mail@x.de', scopes: ['s1'], fetchImpl }), /Token-Endpunkt leitet weiter/);
   assert.equal(opts[0].redirect, 'error');
 });
+
+// A800 a (Sascha 24.11.2026, Zusatz zu S123): mail-jobs kann Abwesenheitsnotizen setzen (erreichen Kunden); der
+// Wächter meldet eine neue oder geänderte. Absender-Einstellungen (Reply-To) bewusst nicht: Versand-Sperre, Frage an Sascha.
+const MIT = (vacation) => settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false }, vacation }, { label: 'security-no-read' });
+test('Abwesenheitsnotiz: Alarm bei neu/geändert, still bei aus, ohne Inhalt im Zustand; alter Zustand lernt still', () => {
+  const grund = MIT({ enableAutoReply: false });
+  const an = MIT({ enableAutoReply: true, responseSubject: 'Bin weg bis 123456', responseBodyPlainText: 'GEHEIMER TEXT', restrictToContacts: false });
+  assert.deepEqual(texte(grund, an).map((t) => t.replace(/„.*“/, '„…“')), ['neu Abwesenheitsnotiz an (an alle, Betreff „…“)']);
+  assert.ok(!JSON.stringify(an).includes('GEHEIMER') && !JSON.stringify(an).includes('123456'), 'kein Text, keine Ziffern im Zustand');
+  const geaendert = MIT({ enableAutoReply: true, responseSubject: 'Bin weg bis 123456', responseBodyPlainText: 'anderer Text', restrictToContacts: false });
+  assert.equal(texte(an, geaendert).length, 1, 'geänderter Text ist ein Alarm');
+  assert.deepEqual(texte(an, grund), [], 'Ausschalten ist still');
+  assert.match(texte(grund, MIT({ enableAutoReply: true, restrictToDomain: true, responseSubject: 'x' }))[0], /nur Domain/);
+  // Zustand aus v1.4.0 ohne diesen Bereich: einmal still lernen, kein Fehlalarm beim Update
+  const alt = settingsItems({ ...BASIS, forwardingAddresses: [], autoForwarding: { enabled: false } }, { label: 'security-no-read' });
+  assert.deepEqual(texte(alt, an), []);
+});

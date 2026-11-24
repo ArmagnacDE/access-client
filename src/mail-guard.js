@@ -151,6 +151,15 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   put(`imap:${sha(stabil(imap))}`, `IMAP ${imap.enabled ? 'an' : 'aus'}${felder(imap, 'enabled') ? ` (${felder(imap, 'enabled')})` : ''}`);
   const pop = snap.pop ?? {};
   put(`pop:${sha(stabil(pop))}`, `POP ${pop.accessWindow ?? '?'}${felder(pop, 'accessWindow') ? ` (${felder(pop, 'accessWindow')})` : ''}`);
+  // Abwesenheitsnotiz (A800 a): Schlüssel = Hash über Betreff, Text und Einschränkungen; gespeichert wird nur ein Kurztext
+  // ohne Inhalt (Betreff maskiert). Geändert = neuer Schlüssel = Alarm; aus = still.
+  const v = snap.vacation;
+  if (v && typeof v === 'object') {
+    if (v.enableAutoReply) {
+      const fuer = v.restrictToContacts ? 'nur Kontakte' : v.restrictToDomain ? 'nur Domain' : 'an alle';
+      put(`vacation:${sha(stabil(v))}`, `Abwesenheitsnotiz an (${fuer}, Betreff „${maskSubject(v.responseSubject, 24).replace(/[^\p{L} .:,!?-]/gu, '•')}“)`);
+    } else put('vacation:aus', 'Abwesenheitsnotiz aus');
+  }
   for (const x of snap.delegates ?? []) {
     const d = domainOf(x?.delegateEmail);
     put(`delegate:${sha(`${String(x?.delegateEmail).toLowerCase()}|${x?.verificationStatus}`)}`, `Delegierung an @${d} (${x?.verificationStatus ?? '?'})`, d);
@@ -162,11 +171,20 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
 // „accepted“ und invoicefetcher „pending“, automatische Weiterleitung aus): eine neue Adresse und eine eingeschaltete
 // oder umgestellte automatische Weiterleitung. Still bleiben Entfernen, Ausschalten und Statuswechsel einer bekannten
 // Adresse; eine bestätigte Adresse leitet erst mit Weiterleitung oder Filter weiter, und beide melden sich selbst.
-const STILL_ENTFERNT = /^(forward|autoForwarding):/;
+// Abwesenheitsnotiz ebenso: Alarm nur bei neu oder geändert (A800 a).
+const STILL_ENTFERNT = /^(forward|autoForwarding|vacation):/;
+const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus']);
+// Bereiche, die ein älterer Zustand noch nicht kennt, werden einmal still gelernt (Update von v1.4.0 ohne Fehlalarm)
+const NEUE_BEREICHE = ['vacation:'];
 /** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
 export function diffSettings(alt, neu) {
   const out = [];
-  for (const [key, v] of Object.entries(neu ?? {})) if (!(key in (alt ?? {})) && key !== 'autoForwarding:aus') out.push({ change: 'neu', key, ...v });
+  const altKeys = Object.keys(alt ?? {});
+  const unbekannt = NEUE_BEREICHE.filter((b) => !altKeys.some((k) => k.startsWith(b)));
+  for (const [key, v] of Object.entries(neu ?? {})) {
+    if (key in (alt ?? {}) || STILL_NEU.has(key) || unbekannt.some((b) => key.startsWith(b))) continue;
+    out.push({ change: 'neu', key, ...v });
+  }
   for (const [key, v] of Object.entries(alt ?? {})) if (!(key in (neu ?? {})) && !STILL_ENTFERNT.test(key)) out.push({ change: 'entfernt', key, ...v });
   return out;
 }

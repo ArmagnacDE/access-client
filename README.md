@@ -219,6 +219,9 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
    Bei Weiterleitungen meldet er nur, was Mails nach außen bringen kann: eine neue Weiterleitungsadresse, eine
    eingeschaltete oder umgestellte automatische Weiterleitung, einen neuen Filter (ab v1.5.0). Still bleiben
    Entfernen, Ausschalten und ein Statuswechsel einer bekannten Adresse (S123, Board A789 b, A793 a).
+   Abwesenheitsnotiz (ab v1.5.0, Board A800 a): Alarm, wenn sie eingeschaltet oder ihr Text geändert wird; gespeichert
+   nur ein Hash und der maskierte Betreff. Absender-Einstellungen (Reply-To) liest er nicht, deren Pfad sperrt die
+   Versand-Sperre in jeder Form.
 2. **Gesendete** mit unbekanntem Client-Fingerabdruck (User-Agent/X-Mailer ohne Version, Host der Message-ID, Form der
    MIME-Grenze). Gmail kennzeichnet API-Versand nicht, und das Audit-Log ist mit `gmail.readonly` nicht lesbar; der
    Aufbau der Mail unterscheidet Saschas Clients von einem Skript. Grenze: Nachgebaute Merkmale fallen nicht auf.
@@ -245,7 +248,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   Reihenfolge der Meldung: Einstellungen, Einrichtung, Ausfälle (nie gekürzt), dann Gesendete, Filterlücken, Kandidaten;
   das Log bekommt alle Zeilen.
 - **Grenzen:** nachgebaute Client-Merkmale; eine gesendete Mail, die selbst das Sperr-Label trägt (Kopie an sich selbst
-  mit Sicherheits-Betreff); Abwesenheitsnotiz und Absender-Einstellungen (`sendAs`, Reply-To) überwacht er nicht.
+  mit Sicherheits-Betreff); Absender-Einstellungen (Reply-To) überwacht er nicht.
 - Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht (vollständig) geprüft.
 
 ## Änderungen gegenüber der Herkunft

@@ -1,5 +1,6 @@
 // Merkmale von Sicherheitsmails (Passwort-Reset, Login-Codes, 2FA): EINE Liste für die Gmail-Filter der Einrichtung
-// (src/gmail-setup.js) und für den Gmail-Wächter (src/gmail.js, blockSecurityContent). Quelle: Unraid openclaw/README.md
+// (src/gmail-setup.js), den Gmail-Wächter (src/gmail.js, blockSecurityContent) und den Mail-Wächter (src/mail-guard.js,
+// der Mails mit Merkmal, aber ohne Sperr-Label meldet und Kandidaten für diese Liste vorschlägt). Quelle: Unraid openclaw/README.md
 // „Gmail-Filter für Sicherheitsmails“ (S29, Board E963 a); Änderungen hier und dort gemeinsam.
 // Warum auch im Wächter: Gmail-Filter wirken nur auf neue Mails, ältere Sicherheitsmails tragen das Label nicht
 // (S112 „Ein Mail-Weg für Sessions und Agenten“, 24.11.2026).

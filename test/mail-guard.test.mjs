@@ -86,6 +86,8 @@ function gmail({ sent = [], inbox = [], filters = null, forwarding = [] } = {}) 
     if (p === 'settings/imap') return ok({ enabled: true });
     if (p === 'settings/pop') return ok({ accessWindow: 'disabled' });
     if (p === 'settings/delegates') return ok({});
+    if (p === 'settings/vacation') return ok({ enableAutoReply: false });
+    if (p === 'settings/sendAs') return ok({ sendAs: [{ sendAsEmail: BOX, isPrimary: true }] });
     if (p === 'messages') {
       const q = u.searchParams.get('q');
       assert.match(q, /-label:security-no-read/, 'jede Suche schließt das Sperr-Label aus');

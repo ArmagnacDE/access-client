@@ -28,8 +28,11 @@ export const SECURITY_FILTERS = Object.freeze([
 const PFADE = new Set(['labels', 'settings/filters']);
 // Nur lesend für den Mail-Wächter (S114): Weiterleitungen, Delegierungen, IMAP/POP; nie schreibend erreichbar.
 // Nur Listen kommen leer, wenn sie leer sind (reviewer S114 nice 8); imap/pop/autoForwarding leer wäre ein Fehler.
+// Abwesenheitsnotiz (S123, Board A800 a): mail-jobs kann sie setzen, sie erreicht Kunden. Absender-Einstellungen
+// (Reply-To) liest readAbsender unten, die einzige Ausnahme zur Versand-Sperre.
 const LISTEN = new Set(['settings/filters', 'settings/forwardingAddresses', 'settings/delegates']);
-const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates']);
+const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates',
+  'settings/vacation']);
 const MAILBOX = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
 async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
@@ -86,6 +89,36 @@ export const isSecurityFilter = (f) => SECURITY_FILTERS.some((sf) => norm(f?.cri
  * Filter, Weiterleitungsadressen, automatische Weiterleitung, IMAP, POP, Delegierungen. Nur GET; ein Lese-Scope
  * (gmail.readonly) reicht für alle. Für den Mail-Wächter (S114).
  */
+/**
+ * Absender-Liste eines Postfachs (Senden-als mit Reply-To) für den Mail-Wächter. EINZIGE Ausnahme zur Versand-Sperre
+ * (assertNoSend lehnt den Pfad sonst ab): Board A800 a („Wächter meldet Senden-als und Reply-To“), Entscheidung
+ * Orchestrator 24.11.2026 a, nur Lesen. Methode GET und Pfad sind fest verdrahtet, kein Parameter des Aufrufers fließt
+ * in die Anfrage außer dem geprüften Postfach; Unterpfade (einzelne Adresse, verify) und jede andere Methode bleiben
+ * gesperrt. Liefert nur Adresse und Reply-To, keine Signatur, keinen Anzeigenamen.
+ */
+export async function readAbsender({ token, mailbox, fetchImpl = fetch }) {
+  if (!MAILBOX.test(String(mailbox))) throw new Error(`Gmail-Einrichtung: Postfach ${String(mailbox).slice(0, 60)} ungültig`);
+  assertNoSend(mailbox);
+  if (!token) throw new Error('Gmail-Einrichtung: kein Zugangstoken');
+  let res;
+  try {
+    res = await fetchImpl(ABSENDER_URL(mailbox), { method: 'GET', headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  } catch (e) { throw new Error(`Gmail-Einrichtung: ${mailbox} nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
+  const roh = await res.text().catch(() => null);
+  if (!res.ok) throw new Error(`Gmail-Einrichtung GET Absender in ${mailbox}: API ${res.status}`);
+  let j = null;
+  try { j = roh != null && roh.trim() === '' ? {} : JSON.parse(roh); } catch { j = null; }
+  if (!j || typeof j !== 'object') throw new Error('Gmail-Einrichtung GET Absender: Antwort unvollständig');
+  // Gmail liefert die Primäradresse immer: leer oder keine Liste ist eine kaputte Antwort, kein „keine Absender“
+  // (sonst lernte der Wächter den Bereich im nächsten Lauf still neu, reviewer S123 B2)
+  const liste = LISTE_AUS(j);
+  if (!Array.isArray(liste) || !liste.length || liste.some((x) => typeof x?.sendAsEmail !== 'string' || !x.sendAsEmail.includes('@'))) throw new Error('Gmail-Einrichtung GET Absender: Antwort unvollständig');
+  return liste.map((x) => ({ email: x.sendAsEmail.toLowerCase(), replyTo: String(x?.replyToAddress ?? '').trim().toLowerCase() }));
+}
+// A800 a, nur Lesen (SEND_ALLOW in test/gmail-send-guard.test.mjs): Pfad und Feldname der Gmail-Antwort
+const ABSENDER_URL = (mb) => `${USERS}${encodeURIComponent(mb)}/settings/sendAs`;
+const LISTE_AUS = (j) => j.sendAs;
+
 export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
   const get = (path) => call({ token, mailbox, path, fetchImpl });
   const labels = (await get('labels')).labels ?? [];
@@ -95,7 +128,9 @@ export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
   const imap = await get('settings/imap');
   const pop = await get('settings/pop');
   const delegates = (await get('settings/delegates')).delegates ?? [];
-  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates };
+  const vacation = await get('settings/vacation');
+  const absender = await readAbsender({ token, mailbox, fetchImpl });
+  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates, vacation, absender };
 }
 
 /**

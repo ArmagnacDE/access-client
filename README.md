@@ -216,6 +216,13 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 1. **Einstellungen** gegen den gesicherten Stand: Filter, Weiterleitungsadressen, automatische Weiterleitung,
    Delegierungen, IMAP, POP (neu/entfernt, einmal gemeldet); dazu jede Nacht, ob Sperr-Label und beide
    Sicherheitsfilter noch da sind. Der Zustand speichert nur Hashes und Kurztexte (Ziel-Domain), keine Kriterien.
+   Bei Weiterleitungen meldet er nur, was Mails nach außen bringen kann: eine neue Weiterleitungsadresse, eine
+   eingeschaltete oder umgestellte automatische Weiterleitung, einen neuen Filter (ab v1.5.0). Still bleiben
+   Entfernen, Ausschalten und ein Statuswechsel einer bekannten Adresse (S123, Board A789 b, A793 a).
+   Abwesenheitsnotiz (ab v1.5.0, Board A800 a): Alarm, wenn sie eingeschaltet oder ihr Text geändert wird; gespeichert
+   nur ein Hash und der maskierte Betreff. Senden-als und Reply-To: Alarm bei neuer Absender-Adresse oder neuer bzw.
+   geänderter Antwortadresse. Dafür gibt es genau eine Leseausnahme zur Versand-Sperre (`readAbsender`: GET fest
+   verdrahtet auf die Absender-Liste, Unterpfade und andere Methoden bleiben gesperrt; A800 a).
 2. **Gesendete** mit unbekanntem Client-Fingerabdruck (User-Agent/X-Mailer ohne Version, Host der Message-ID, Form der
    MIME-Grenze). Gmail kennzeichnet API-Versand nicht, und das Audit-Log ist mit `gmail.readonly` nicht lesbar; der
    Aufbau der Mail unterscheidet Saschas Clients von einem Skript. Grenze: Nachgebaute Merkmale fallen nicht auf.
@@ -242,7 +249,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   Reihenfolge der Meldung: Einstellungen, Einrichtung, Ausfälle (nie gekürzt), dann Gesendete, Filterlücken, Kandidaten;
   das Log bekommt alle Zeilen.
 - **Grenzen:** nachgebaute Client-Merkmale; eine gesendete Mail, die selbst das Sperr-Label trägt (Kopie an sich selbst
-  mit Sicherheits-Betreff); Abwesenheitsnotiz und Absender-Einstellungen (`sendAs`, Reply-To) überwacht er nicht.
+  mit Sicherheits-Betreff); Signaturen und Anzeigenamen überwacht er nicht.
 - Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht (vollständig) geprüft.
 
 ## Änderungen gegenüber der Herkunft
@@ -264,6 +271,9 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.5.0) Merkmal-Liste um Varianten und Französisch ergänzt (A782 a); To/Cc mit Anzeigenamen nach RFC 2047
+  (`encodeAddressHeader`, auch in `buildMime`); Google-Token-Abrufe ohne Weiterleitung (`redirect: 'error'`) mit
+  lesbarem Grund (`netzGrund`); Weiterleitungs-Befunde im `mail-guard` wie oben.
 - neu (v1.4.0) `mail-guard` (Modul und Befehl); `gmail-setup` liest zusätzlich Weiterleitungen, Delegierungen, IMAP und POP (`readMailSettings`, nur GET) und exportiert `missingSecurityParts`, `isSecurityFilter`.
 - neu (v1.3.0) `mailDelegation`, `access-mail`, `mail` (`draftMail`), `createCheckedDraft` mit `text` und `attachments`
   (`buildDraftMime`), `blockSecurityContent`, `security-mail`, `gmail-setup` mit `scripts/security-label.mjs`.

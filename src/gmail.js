@@ -115,9 +115,45 @@ function encodeHeader(value) {
   return '=?UTF-8?B?' + Buffer.from(value, 'utf8').toString('base64') + '?=';
 }
 
+/** An Komma/Semikolon trennen, aber nicht in Anführungszeichen („"Doe, Jane" <j@x>“). */
+function splitAddressList(t) {
+  const out = []; let cur = ''; let quoted = false; let esc = false;
+  for (const ch of String(t ?? '')) {
+    // \" in einer quoted-string ist ein Zeichen, kein Ende (Codex S123 #2)
+    if (esc) esc = false; else if (quoted && ch === '\\') esc = true; else if (ch === '"') quoted = !quoted;
+    if (!quoted && (ch === ',' || ch === ';')) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+// RFC 2047 für Anzeigenamen (S123 „Mail-Weg Nacharbeiten“): „Jörg Müller <jm@x.de>“ stand roh als UTF-8 im To-Kopf.
+// Kodiert wird nur der Name (ohne Anführungszeichen), die Adresse bleibt lesbar. Je encoded-word höchstens 45 Bytes
+// (60 Zeichen Base64, unter der Grenze von 75), ohne ein Zeichen zu zerteilen.
+function encodedWords(text) {
+  const words = []; let cur = '';
+  for (const ch of text) {
+    if (cur && Buffer.byteLength(cur + ch, 'utf8') > 45) { words.push(cur); cur = ''; }
+    cur += ch;
+  }
+  if (cur) words.push(cur);
+  return words.map((w) => `=?UTF-8?B?${Buffer.from(w, 'utf8').toString('base64')}?=`).join(' ');
+}
+function encodeAddress(a) {
+  const m = /^(.*?)\s*<([^<>]+)>$/.exec(a);
+  // eslint-disable-next-line no-control-regex
+  if (!m || /^[\x00-\x7F]*$/.test(m[1])) return a;
+  const name = m[1].trim().replace(/^"(.*)"$/, '$1').replace(/\\(.)/g, '$1');
+  return `${encodedWords(name)} <${m[2]}>`;
+}
+/** Adressliste für To/Cc: String (mit Komma/Semikolon) oder Array → kodierte, mit „, “ verbundene Liste. */
+export function encodeAddressHeader(v) {
+  return (Array.isArray(v) ? v : splitAddressList(v)).map((e) => String(e || '').trim()).filter(Boolean).map(encodeAddress).join(', ');
+}
+
 // cc: string oder Array; leere Werte werden verworfen, damit kein "Cc: " entsteht.
 export function normalizeCc(cc) {
-  const list = Array.isArray(cc) ? cc : String(cc || '').split(/[,;]/);
+  const list = Array.isArray(cc) ? cc : splitAddressList(cc || '');
   return list.map((e) => String(e || '').trim()).filter(Boolean);
 }
 
@@ -135,8 +171,8 @@ export function msgIdList(v) {
 export function buildMime(to, subject, htmlBody, cc, reply = null) {
   const body64 = Buffer.from(htmlBody, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
   const ccList = normalizeCc(cc);
-  const headers = [`To: ${to}`];
-  if (ccList.length) headers.push(`Cc: ${ccList.join(', ')}`);
+  const headers = [`To: ${encodeAddressHeader(to)}`];
+  if (ccList.length) headers.push(`Cc: ${encodeAddressHeader(ccList)}`);
   const irt = msgIdList(reply?.inReplyTo).split(' ').at(-1);
   if (irt) headers.push(`In-Reply-To: ${irt}`);
   const refs = msgIdList(reply?.references);
@@ -164,8 +200,8 @@ export const DRAFT_ATTACH_MAX = 15 * 1024 * 1024;
 export function buildDraftMime({ to, cc, subject, html = null, text = null, attachments = [], reply = null }) {
   if ((html == null) === (text == null)) throw new Error('Gmail-Entwurf: genau eins von html oder text');
   const ccList = normalizeCc(cc);
-  const headers = [`To: ${to}`];
-  if (ccList.length) headers.push(`Cc: ${ccList.join(', ')}`);
+  const headers = [`To: ${encodeAddressHeader(to)}`];
+  if (ccList.length) headers.push(`Cc: ${encodeAddressHeader(ccList)}`);
   const irt = msgIdList(reply?.inReplyTo).split(' ').at(-1);
   if (irt) headers.push(`In-Reply-To: ${irt}`);
   const refs = msgIdList(reply?.references);

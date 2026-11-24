@@ -40,13 +40,16 @@ const NEGATION = /\b(nie|niemals|nicht|kein\w*|verbiete\w*|verboten|gesperrt|spe
 // Begründete Ausnahmen für SEND_PATTERNS: Datei + Ausschnitt der Zeile. Jeder Eintrag braucht einen Grund.
 const SEND_ALLOW = [
   { file: 'src/gmail.js', line: "s.startsWith('sendas')", reason: 'Sperrliste der Versand-Hülle selbst (assertNoSend lehnt sendAs ab)' },
+  // A800 a, nur Lesen: der Mail-Wächter liest die Absender-Liste (Reply-To), GET fest verdrahtet in readAbsender
+  { file: 'src/gmail-setup.js', line: 'const ABSENDER_URL = (mb) => `${USERS}${encodeURIComponent(mb)}/settings/sendAs`;', reason: 'A800 a, nur Lesen' },
+  { file: 'src/gmail-setup.js', line: 'const LISTE_AUS = (j) => j.sendAs;', reason: 'A800 a, nur Lesen (Feldname der Antwort)' },
 ];
 
 // Dateien, die die Gmail-API direkt ansprechen, statt über lib/gmail.js. Neue Einträge nur mit Grund.
 const DIRECT_GMAIL = /gmail\.googleapis\.com|www\.googleapis\.com\/gmail/i;
 const DIRECT_ALLOW = {
   'src/gmail.js': 'die Hülle selbst',
-  'src/gmail-setup.js': 'Einrichtung Sperr-Label (S112, A694 a): nur GET/POST auf labels und settings/filters, über assertNoSend; test/gmail-setup.test.mjs',
+  'src/gmail-setup.js': 'Einrichtung Sperr-Label (S112, A694 a): nur GET/POST auf labels und settings/filters, über assertNoSend; test/gmail-setup.test.mjs. Dazu nur lesend für den Mail-Wächter: Einstellungen (S114) und die Absender-Liste (readAbsender, A800 a, test/s123-followup.test.mjs)',
 };
 
 function* files(dir) {

@@ -29,7 +29,7 @@ const T = { labelsToken: 'TL', filtersToken: 'TF' };
 
 test('zwei Filter wie in der Unraid-README: Betreff-Liste und reine Sicherheits-Absender', () => {
   assert.equal(SECURITY_FILTERS.length, 2);
-  assert.match(SECURITY_FILTERS[0].criteria.query, /^subject:\("password reset" OR .*"Ihr Code lautet"\)$/);
+  assert.match(SECURITY_FILTERS[0].criteria.query, /^subject:\("password reset" OR .*"code de vérification"\)$/);
   assert.equal(SECURITY_FILTERS[1].criteria.from, 'accounts.google.com OR account-security-noreply@accountprotection.microsoft.com OR appleid@id.apple.com OR security@facebookmail.com');
 });
 

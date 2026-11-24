@@ -131,13 +131,17 @@ function filterSummary(f, labelNames) {
 export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel } = {}) {
   const out = {};
   const put = (key, summary, domain = null) => { out[key] = { summary, ...(domain ? { domain } : {}) }; };
+  // Schlüssel-Format 2 (S123): Weiterleitungsadressen nur nach Adresse. Ein Zustand ohne diese Marke (v1.4.0) lernt die
+  // Weiterleitungsadressen einmal still neu, statt jede bekannte Adresse als neu zu melden (Codex S123 Folgerunde).
+  put('format:2', 'Schlüssel-Format 2');
   const labelNames = new Map((snap.labels ?? []).map((l) => [l.id, String(l.name ?? '').toLowerCase().replace(/\s+/g, '-') === label ? 'sperr' : 'andere']));
   for (const f of snap.filters ?? []) {
     put(`filter:${sha(stabil([f?.criteria ?? {}, f?.action ?? {}]))}`, filterSummary(f, labelNames), f?.action?.forward ? domainOf(f.action.forward) : null);
   }
   for (const w of snap.forwardingAddresses ?? []) {
     const d = domainOf(w?.forwardingEmail);
-    put(`forward:${sha(`${String(w?.forwardingEmail).toLowerCase()}|${w?.verificationStatus}`)}`, `Weiterleitungsadresse @${d} (${w?.verificationStatus ?? '?'})`, d);
+    // Schlüssel nur die Adresse (S123, Board A793 a): ein Statuswechsel einer bekannten Adresse ist kein Befund
+    put(`forward:${sha(String(w?.forwardingEmail).toLowerCase())}`, `Weiterleitungsadresse @${d} (${w?.verificationStatus ?? '?'})`, d);
   }
   const af = snap.autoForwarding ?? {};
   if (af.enabled) {
@@ -150,6 +154,19 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   put(`imap:${sha(stabil(imap))}`, `IMAP ${imap.enabled ? 'an' : 'aus'}${felder(imap, 'enabled') ? ` (${felder(imap, 'enabled')})` : ''}`);
   const pop = snap.pop ?? {};
   put(`pop:${sha(stabil(pop))}`, `POP ${pop.accessWindow ?? '?'}${felder(pop, 'accessWindow') ? ` (${felder(pop, 'accessWindow')})` : ''}`);
+  // Abwesenheitsnotiz (A800 a): Schlüssel = Hash über Betreff, Text und Einschränkungen; gespeichert wird nur ein Kurztext
+  // ohne Inhalt (Betreff maskiert). Geändert = neuer Schlüssel = Alarm; aus = still.
+  const v = snap.vacation;
+  if (v && typeof v === 'object') {
+    if (v.enableAutoReply) {
+      const fuer = v.restrictToContacts ? 'nur Kontakte' : v.restrictToDomain ? 'nur Domain' : 'an alle';
+      put(`vacation:${sha(stabil(v))}`, `Abwesenheitsnotiz an (${fuer}, Betreff „${maskSubject(v.responseSubject, 24).replace(/[^\p{L} .:,!?-]/gu, '•')}“)`);
+    } else put('vacation:aus', 'Abwesenheitsnotiz aus');
+  }
+  // Senden-als mit Reply-To (A800 a): neue Adresse oder neue/geänderte Antwortadresse = Alarm; entfernt = still
+  for (const x of snap.absender ?? []) {
+    put(`absender:${sha(`${x.email}|${x.replyTo}`)}`, `Senden als @${domainOf(x.email)}${x.replyTo ? ` (Reply-To @${domainOf(x.replyTo)})` : ''}`, domainOf(x.replyTo || x.email));
+  }
   for (const x of snap.delegates ?? []) {
     const d = domainOf(x?.delegateEmail);
     put(`delegate:${sha(`${String(x?.delegateEmail).toLowerCase()}|${x?.verificationStatus}`)}`, `Delegierung an @${d} (${x?.verificationStatus ?? '?'})`, d);
@@ -157,11 +174,35 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   return out;
 }
 
-/** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides). */
+// Weiterleitungen melden nur, was Mails nach außen bringen kann (S123, Board A789 b, A793 a: mail@ hat Lexware
+// „accepted“ und invoicefetcher „pending“, automatische Weiterleitung aus): eine neue Adresse und eine eingeschaltete
+// oder umgestellte automatische Weiterleitung. Still bleiben Entfernen, Ausschalten und Statuswechsel einer bekannten
+// Adresse; eine bestätigte Adresse leitet erst mit Weiterleitung oder Filter weiter, und beide melden sich selbst.
+// Abwesenheitsnotiz, Senden-als und Reply-To ebenso: Alarm nur bei neu oder geändert (A800 a).
+const STILL_ENTFERNT = /^(forward|autoForwarding|vacation|absender):/;
+const STILL_NEU = new Set(['autoForwarding:aus', 'vacation:aus', 'format:2']);
+// Bereiche, die ein älterer Zustand noch nicht kennt, werden einmal still gelernt (Update von v1.4.0 ohne Fehlalarm)
+const NEUE_BEREICHE = ['vacation:', 'absender:'];
+const unbekannteBereiche = (alt) => {
+  const altKeys = Object.keys(alt ?? {});
+  const u = NEUE_BEREICHE.filter((b) => !altKeys.some((k) => k.startsWith(b)));
+  if (!altKeys.includes('format:2')) u.push('forward:');
+  return u;
+};
+/** Was ein Lauf still übernimmt, weil der Zustand den Bereich noch nicht kannte (Update); fürs Log (reviewer S123). */
+export function learnedSilently(alt, neu) {
+  const u = unbekannteBereiche(alt);
+  return Object.entries(neu ?? {}).filter(([k]) => !(k in (alt ?? {})) && !STILL_NEU.has(k) && u.some((b) => k.startsWith(b))).map(([, v]) => v);
+}
+/** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
 export function diffSettings(alt, neu) {
   const out = [];
-  for (const [key, v] of Object.entries(neu ?? {})) if (!(key in (alt ?? {}))) out.push({ change: 'neu', key, ...v });
-  for (const [key, v] of Object.entries(alt ?? {})) if (!(key in (neu ?? {}))) out.push({ change: 'entfernt', key, ...v });
+  const unbekannt = unbekannteBereiche(alt);
+  for (const [key, v] of Object.entries(neu ?? {})) {
+    if (key in (alt ?? {}) || STILL_NEU.has(key) || unbekannt.some((b) => key.startsWith(b))) continue;
+    out.push({ change: 'neu', key, ...v });
+  }
+  for (const [key, v] of Object.entries(alt ?? {})) if (!(key in (neu ?? {})) && !STILL_ENTFERNT.test(key)) out.push({ change: 'entfernt', key, ...v });
   return out;
 }
 
@@ -279,7 +320,7 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
   const truncated = (!baseline && gesendet.truncated) || kandidaten.truncated;
   if (truncated) findings.push({ kind: 'error', detail: `zu viele Treffer (über ${maxMessages} in einer Stunde), Rest dieser Stunde nicht geprüft` });
   return {
-    mailbox, baseline, findings, truncated, incomplete: truncated,
+    mailbox, baseline, findings, truncated, incomplete: truncated, learned: baseline ? [] : learnedSilently(state.settings, items),
     counts: { filters: snap.filters.length, settings: Object.keys(items).length, sentChecked, fingerprints: Object.keys(known).length, securityChecked, spam, findings: findings.length, ...(baseline && gesendet.truncated ? { lernenGekuerzt: true } : {}) },
     state: { version: 1, mailbox, lastRun: now, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
   };

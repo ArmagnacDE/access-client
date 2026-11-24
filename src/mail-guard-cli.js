@@ -27,6 +27,8 @@ import { formatNotification, proposeFromFindings, scanMailbox } from './mail-gua
 import { loadConfig, resolveMailbox } from './read/accounts.js';
 import { parseArgs, redact } from './read/cli.js';
 
+// ⚠ im Log: was Mails nach außen bringen oder Kunden erreichen kann
+const WARN = /Weiterleitung an|Weiterleitungsadresse|Delegierung an|Reply-To|Abwesenheitsnotiz an/;
 export const USAGE = `mail-guard: Mail-Wächter (nur lesend; Meldung per ntfy)
   mail-guard check   [--mailbox <adresse>]… [--key <datei>] [--label <name>] [--state-dir <ordner>] [--ntfy-env <VARIABLE>] [--days <n>] [--learn-days <n>] [--dry-run]
   mail-guard propose [--mailbox <adresse>]… [--key <datei>] [--label <name>] [--days <n>]
@@ -150,9 +152,11 @@ export async function run(argv, deps = {}) {
           log(`${mb}: gelernt Abdruck ${v.count}× ${fp}${/^ua:- .* b:-$/.test(fp) ? ' ⚠ einteilig ohne Client, so sieht auch Skript-Versand aus' : ''}`);
         }
         for (const v of Object.values(r.state.settings)) {
-          log(`${mb}: gelernt ${v.summary}${/Weiterleitung an|Weiterleitungsadresse|Delegierung an/.test(v.summary) ? ' ⚠' : ''}`);
+          log(`${mb}: gelernt ${v.summary}${WARN.test(v.summary) ? ' ⚠' : ''}`);
         }
       }
+      // Update eines älteren Zustands: neue Bereiche werden still übernommen; sichtbar machen (reviewer S123 nice 3)
+      for (const v of r.learned ?? []) log(`${mb}: gelernt (Update) ${v.summary}${WARN.test(v.summary) ? ' ⚠' : ''}`);
     } catch (e) {
       unlesbar++;
       const grund = redact(String(e?.message)).slice(0, 300);

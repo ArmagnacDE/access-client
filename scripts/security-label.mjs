@@ -2,7 +2,7 @@
 // Sperr-Label für Sicherheitsmails in Postfächern einrichten (S112 „Ein Mail-Weg für Sessions und Agenten“, Board A694 a).
 //
 //   node scripts/security-label.mjs [--mailbox <adresse>]…            Dry-Run: zeigt je Postfach, was fehlt (Standard)
-//   node scripts/security-label.mjs --apply [--mailbox <adresse>]…    legt nur Fehlendes an (Label, zwei Filter)
+//   node scripts/security-label.mjs --apply [--mailbox <adresse>]…    legt nur Fehlendes an (Label, Filter)   
 //   node scripts/security-label.mjs --rollback <stand-datei>          zeigt, was ein Lauf angelegt hat, und wie man es
 //                                                                     von Hand entfernt (löscht selbst nichts)
 //

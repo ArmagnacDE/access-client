@@ -13,7 +13,7 @@
 // bräuchte es gmail.modify). Das sagt die Ausgabe des Skripts.
 
 import { assertNoSend, labelKey } from './gmail.js';
-import { SENDER_QUERY, SUBJECT_QUERY } from './security-mail.js';
+import { SENDER_QUERY, SUBJECT_QUERIES } from './security-mail.js';
 
 const USERS = 'https://gmail.googleapis.com/gmail/v1/users/';
 export const GMAIL_LABELS = 'https://www.googleapis.com/auth/gmail.labels';
@@ -21,7 +21,8 @@ export const GMAIL_SETTINGS_BASIC = 'https://www.googleapis.com/auth/gmail.setti
 
 // Filter aus der gemeinsamen Liste (src/security-mail.js), dieselbe, die der Wächter prüft.
 export const SECURITY_FILTERS = Object.freeze([
-  Object.freeze({ name: 'filter-betreff', criteria: Object.freeze({ query: SUBJECT_QUERY }) }),
+  // Betreff auf mehrere Filter verteilt (S137): filter-betreff, filter-betreff-2, …
+  ...SUBJECT_QUERIES.map((query, i) => Object.freeze({ name: i ? `filter-betreff-${i + 1}` : 'filter-betreff', criteria: Object.freeze({ query }) })),
   Object.freeze({ name: 'filter-absender', criteria: Object.freeze({ from: SENDER_QUERY }) }),
 ]);
 

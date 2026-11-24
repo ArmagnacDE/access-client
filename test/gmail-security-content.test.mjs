@@ -45,18 +45,19 @@ function fake() {
 const A = { token: 'T', mailbox: 'hello@example.org' };
 
 test('eine Liste: Filter der Einrichtung und Wächter nutzen dieselben Betreffe und Absender', () => {
-  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 60);
+  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 64);
   // Ergänzung S114 (Mail-Wächter, Board A782 a): Belege aus dem propose-Lauf 24.11.2026 (90 Tage, ohne Sperr-Label)
-  for (const s of ['verify your email', 'neues Passwort', 'new login', 'new device', 'multi-factor', 'two-step', 'Verifizieren Sie Ihre Identität',
+  for (const s of ['verify your email', 'neues Passwort', 'new login', 'new device', 'multi-factor', 'two-step authentication', 'Verifizieren Sie Ihre Identität',
     'security alert', 'Sicherheitswarnung']) assert.ok(SECURITY_SUBJECTS.includes(s), s);
   for (const subject of ['Verify your email for ElevenLabs', '[Billbee] Neues Passwort', 'New login to your ClickUp account', 'We noticed a new device logged in',
     'Your multi-factor authentication was changed', 'New two-step authentication method added', 'Verifizieren Sie ihre Identität', 'Security alert: new passkey added',
     'Sicherheitswarnung: Anmeldung mit neuem Gerät']) assert.ok(isSecurityMail({ from: 'x@y.example', subject }), subject);
-  assert.ok(SECURITY_FILTERS[0].criteria.query.length < 1400, 'Gmail-Filter bleibt unter der Längengrenze');
+  for (const f of SECURITY_FILTERS.filter((x) => x.criteria.query)) assert.ok(f.criteria.query.length < 1400, `${f.name} bleibt unter der Längengrenze`);
   assert.deepEqual(SECURITY_SENDERS, ['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com', 'appleid@id.apple.com', 'security@facebookmail.com']);
-  assert.equal(SECURITY_FILTERS[0].criteria.query, `subject:(${SECURITY_SUBJECTS.map((s) => `"${s}"`).join(' OR ')})`);
-  assert.equal(SECURITY_FILTERS[1].criteria.from, SECURITY_SENDERS.join(' OR '));
-  assert.equal(securityExclusionQuery(), `-${SECURITY_FILTERS[0].criteria.query} -from:(${SECURITY_SENDERS.join(' OR ')})`);
+  // S137: Betreff auf mehrere Filter verteilt, zusammen genau die Liste, Phrasen in Anführungszeichen
+  assert.deepEqual(SECURITY_FILTERS.filter((f) => f.criteria.query).flatMap((f) => [...f.criteria.query.matchAll(/"([^"]+)"/g)].map((m) => m[1])), [...SECURITY_SUBJECTS]);
+  assert.equal(SECURITY_FILTERS.at(-1).criteria.from, SECURITY_SENDERS.join(' OR '));
+  assert.equal(securityExclusionQuery(), `-subject:(${SECURITY_SUBJECTS.map((x) => `"${x}"`).join(' OR ')}) -from:(${SECURITY_SENDERS.join(' OR ')})`);
 });
 
 test('isSecurityMail: Betreff (Groß/klein egal) oder Absender aus der Liste', () => {

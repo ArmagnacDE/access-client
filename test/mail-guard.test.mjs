@@ -142,7 +142,7 @@ test('erster Lauf legt den Grundstand an und meldet nichts; zweiter Lauf meldet 
 test('fehlender Sicherheitsfilter wird jede Nacht gemeldet (Einrichtung, nicht Änderung)', async () => {
   const f = gmail({ filters: [] });
   const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW, fetchImpl: f });
-  assert.deepEqual(r1.findings.map((x) => `${x.kind}:${x.detail}`), ['setup:fehlt filter-betreff, filter-absender']);
+  assert.deepEqual(r1.findings.map((x) => `${x.kind}:${x.detail}`), ['setup:fehlt filter-betreff, filter-betreff-2, filter-absender']);
   const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW + 86_400_000, fetchImpl: f });
   assert.equal(r2.findings.filter((x) => x.kind === 'setup').length, 1);
 });

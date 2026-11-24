@@ -27,25 +27,25 @@ function gmail({ labels = [{ id: 'INBOX', name: 'INBOX' }], filters = [] } = {})
 }
 const T = { labelsToken: 'TL', filtersToken: 'TF' };
 
-test('zwei Filter wie in der Unraid-README: Betreff-Liste und reine Sicherheits-Absender', () => {
-  assert.equal(SECURITY_FILTERS.length, 2);
-  assert.match(SECURITY_FILTERS[0].criteria.query, /^subject:\("password reset" OR .*"code de vérification"\)$/);
-  assert.equal(SECURITY_FILTERS[1].criteria.from, 'accounts.google.com OR account-security-noreply@accountprotection.microsoft.com OR appleid@id.apple.com OR security@facebookmail.com');
+test('Filter: Betreff-Liste auf zwei Filter verteilt (S137) und reine Sicherheits-Absender', () => {
+  assert.deepEqual(SECURITY_FILTERS.map((f) => f.name), ['filter-betreff', 'filter-betreff-2', 'filter-absender']);
+  assert.match(SECURITY_FILTERS[0].criteria.query, /^subject:\("password reset" OR .*"alerte de sécurité"\)$/);
+  assert.equal(SECURITY_FILTERS[2].criteria.from, 'accounts.google.com OR account-security-noreply@accountprotection.microsoft.com OR appleid@id.apple.com OR security@facebookmail.com');
 });
 
 test('Dry-Run: listet Fehlendes, schreibt nichts', async () => {
   const f = gmail();
   const p = await planSecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: f });
-  assert.deepEqual({ label: p.labelId, fehlt: p.missing.map((x) => x.name) }, { label: null, fehlt: ['label', 'filter-betreff', 'filter-absender'] });
+  assert.deepEqual({ label: p.labelId, fehlt: p.missing.map((x) => x.name) }, { label: null, fehlt: ['label', 'filter-betreff', 'filter-betreff-2', 'filter-absender'] });
   assert.ok(f.log.every((c) => c.method === 'GET'));
 });
 
-test('Live: legt Label und beide Filter an; zweiter Lauf legt nichts mehr an (idempotent)', async () => {
+test('Live: legt Label und alle Filter an; zweiter Lauf legt nichts mehr an (idempotent)', async () => {
   const f = gmail();
   const r = await applySecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: f });
-  assert.deepEqual(r.created.map((x) => x.name), ['label', 'filter-betreff', 'filter-absender']);
+  assert.deepEqual(r.created.map((x) => x.name), ['label', 'filter-betreff', 'filter-betreff-2', 'filter-absender']);
   const posts = f.log.filter((c) => c.method !== 'GET');
-  assert.deepEqual(posts.map((c) => [c.method, c.path.split('/').slice(5).join('/')]), [['POST', 'labels'], ['POST', 'settings/filters'], ['POST', 'settings/filters']]);
+  assert.deepEqual(posts.map((c) => [c.method, c.path.split('/').slice(5).join('/')]), [['POST', 'labels'], ['POST', 'settings/filters'], ['POST', 'settings/filters'], ['POST', 'settings/filters']]);
   assert.equal(posts[0].body.name, 'security-no-read');
   for (const c of posts.slice(1)) assert.deepEqual(c.body.action, { addLabelIds: [f.st.labels.at(-1).id] }, 'nur Label anwenden, kein Archivieren, kein Weiterleiten');
   const n = f.log.length;
@@ -57,7 +57,7 @@ test('Live: legt Label und beide Filter an; zweiter Lauf legt nichts mehr an (id
 test('vorhandenes Label (andere Schreibweise) wird genutzt, nicht doppelt angelegt', async () => {
   const f = gmail({ labels: [{ id: 'Label_9', name: 'Security No Read' }] });
   const r = await applySecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: f });
-  assert.deepEqual(r.created.map((x) => x.name), ['filter-betreff', 'filter-absender']);
+  assert.deepEqual(r.created.map((x) => x.name), ['filter-betreff', 'filter-betreff-2', 'filter-absender']);
   assert.ok(f.log.filter((c) => c.method === 'POST').every((c) => c.body.action?.addLabelIds?.[0] === 'Label_9'));
 });
 
@@ -75,7 +75,7 @@ test('Codex S112 #2: vorhandener Filter mit zusätzlichen Kriterien (z. B. to) z
   const f = gmail({ labels: [{ id: 'Label_9', name: 'security-no-read' }],
     filters: SECURITY_FILTERS.map((x, i) => ({ id: `F${i}`, criteria: { ...x.criteria, to: 'nur@example.org' }, action: { addLabelIds: ['Label_9'] } })) });
   const p = await planSecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: f });
-  assert.deepEqual(p.missing.map((x) => x.name), ['filter-betreff', 'filter-absender']);
+  assert.deepEqual(p.missing.map((x) => x.name), ['filter-betreff', 'filter-betreff-2', 'filter-absender']);
 });
 
 test('Codex S112 #3: jede Anlage wird sofort gemeldet (Teilfehler verliert keine IDs)', async () => {

@@ -165,6 +165,29 @@ unter `~/.config/gsheets/` und das Sperr-Label, keine Geheimnisse:
   (Google meldet `invalid_grant`).
 - Lese-Tokens **ohne** `gmail.metadata` erzeugen: Hat ein Token diesen Scope, lehnt Gmail Suche und `format=full` ab.
 
+### Tokens erzeugen (ab v1.5.1)
+
+Ein Konto mit `token` in `read.json` braucht eine OAuth-Token-Datei nur mit Lese-Scopes. `scripts/read-token.mjs`
+erzeugt sie in zwei Schritten, weil der Inhaber im eigenen Browser zustimmt und die Sitzung keine Eingabe hat:
+
+```
+node scripts/read-token.mjs start --account <name>
+node scripts/read-token.mjs finish --account <name> --url-file <datei mit der Weiterleitungs-URL>
+```
+
+- `start` zeigt die Anmelde-URL (Desktop-Client aus `oauth-client.json`, PKCE S256, `access_type=offline`,
+  `login_hint` = Adresse des Kontos) mit genau `drive.readonly`, `spreadsheets.readonly`, `documents.readonly`,
+  `userinfo.email`, `openid`. Zwischenstand (state, Verifier, kein Secret) unter
+  `~/.local/state/access-client/read-token-<name>.json`, Rechte 600.
+- Nach der Zustimmung landet der Browser auf `http://127.0.0.1:8765/…` („nicht erreichbar“ ist richtig); die ganze
+  Adresse aus der Adresszeile geht an `finish`. Der Code darin ist ohne den Verifier dieser Maschine wertlos und verfällt
+  nach Minuten.
+- `finish` schreibt die Datei aus `read.json` (`token`) unter `~/.config/gsheets/` nur, wenn `state` passt, Google
+  genau Lese-Scopes meldet (mindestens Drive und Sheets), ein `refresh_token` kommt und das angemeldete Konto
+  (`id_token`) das aus `read.json` ist: neue Datei, Rechte 600, nie überschrieben, nur `refresh_token`, `scope`,
+  `token_uri`. Die Ausgabe nennt nie ein Token. Gegenprobe: `access-read accounts --check`.
+- Rückweg: nur die Datei löschen. **Nicht** unter myaccount.google.com/permissions den Zugriff der App entziehen: das Lese-Token nutzt denselben OAuth-Client wie `token.json`; ist es dasselbe Google-Konto, wären damit alle Refresh-Tokens dieses Clients ungültig, auch der Haupt-Token (reviewer S137).
+
 ### Installieren für Sessions
 
 ```
@@ -195,7 +218,8 @@ access-mail draft --from <postfach> --reply-to <mail-id> (--body … | --body-fi
 
 ## Sperr-Label einrichten: `scripts/security-label.mjs` (ab v1.3.0)
 
-Legt in jedem Postfach das Sperr-Label (`gmailBlockedLabel`) und die zwei Filter aus `src/security-mail.js` an (Aktion
+Legt in jedem Postfach das Sperr-Label (`gmailBlockedLabel`) und die Filter aus `src/security-mail.js` an (Betreff auf
+mehrere Filter verteilt, ab v1.5.1, dazu ein Absender-Filter) (Aktion
 nur „Label anwenden“). Dry-Run ist Standard, `--apply` legt nur Fehlendes an, gelöscht und geändert wird nie; der
 Vorher-Stand und die neuen IDs landen in `~/.local/state/access-client/security-label-<zeit>.json`, `--rollback <datei>`
 zeigt sie für das Entfernen von Hand. Braucht in der Delegierung zusätzlich `gmail.labels` und `gmail.settings.basic`.
@@ -271,6 +295,12 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
+  „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); dazu „two-step verification“, „two-step login“,
+  „zweistufige Authentifizierung“, „vérifier votre identité“. Der Betreff steht jetzt auf **mehreren Filtern**
+  (`filter-betreff`, `filter-betreff-2`, je unter 1400 Zeichen, `SUBJECT_QUERIES`; neue Phrasen ans Ende, dann ändert
+  sich nur der letzte). Achtung: `scripts/security-label.mjs --apply` legt die neuen Filter an; die alten Betreff-Filter
+  früherer Versionen entfernt der Inhaber von Hand (das Skript löscht nichts), danach Dry-Run: „vollständig“.
 - neu (v1.5.0) Merkmal-Liste um Varianten und Französisch ergänzt (A782 a); To/Cc mit Anzeigenamen nach RFC 2047
   (`encodeAddressHeader`, auch in `buildMime`); Google-Token-Abrufe ohne Weiterleitung (`redirect: 'error'`) mit
   lesbarem Grund (`netzGrund`); Weiterleitungs-Befunde im `mail-guard` wie oben.

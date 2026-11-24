@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { SECURITY_SUBJECTS, SUBJECT_QUERY, isSecurityMail } from '../src/security-mail.js';
+import { SECURITY_SUBJECTS, SUBJECT_QUERIES, isSecurityMail } from '../src/security-mail.js';
 import { diffSettings, settingsItems } from '../src/mail-guard.js';
 import { buildDraftMime, buildMime } from '../src/gmail.js';
 import { getDelegatedToken } from '../src/google-auth.js';
@@ -36,7 +36,7 @@ test('Merkmal-Liste: alle Arten aus A782 a auch in Varianten und auf Französisc
     'Les deux facteurs qui font un grand Armagnac', '2 step payment plan']) {
     assert.equal(isSecurityMail({ from: 'x@y.example', subject }), false, subject);
   }
-  assert.ok(SUBJECT_QUERY.length < 1400, `Gmail-Filter bleibt unter der Längengrenze (${SUBJECT_QUERY.length})`);
+  for (const q of SUBJECT_QUERIES) assert.ok(q.length < 1400, `Gmail-Filter bleibt unter der Längengrenze (${q.length})`);
   assert.equal(new Set(SECURITY_SUBJECTS.map((s) => s.toLowerCase())).size, SECURITY_SUBJECTS.length, 'keine Doppel');
 });
 

@@ -350,7 +350,7 @@ test('Codex-Folgerunde: Adresse in Anführungszeichen, Codes mit Leer- und Binde
 });
 
 test('Codex-Folgerunde: echte Codes mit Jahreszahl-Ziffern bleiben Kandidaten; Rabatt, Sendung, Lieferadresse nicht', () => {
-  for (const t of ['Your code: 2026', 'Your code: 1999']) assert.ok(securityCandidate({ subject: t }), t);
+  for (const t of ['Your code: 2026', 'Your code: 1999', 'Your code: 482913 – Sales portal']) assert.ok(securityCandidate({ subject: t }), t);
   for (const t of ['Your discount code 2026', 'Bestellung 10423 ist unterwegs – Tracking-Link', 'Bitte bestätigen Sie Ihre Lieferadresse']) assert.equal(securityCandidate({ subject: t }), null, t);
 });
 

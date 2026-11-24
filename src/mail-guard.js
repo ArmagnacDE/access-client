@@ -83,7 +83,7 @@ export function sentFingerprint(headers) {
 const KANDIDATEN = Object.freeze([
   { name: 'code-wort', re: /(zugangs|bestätigungs|sicherheits|verifizierungs|anmelde|einmal|login|access|security|verification|authentication|auth|confirmation|sign-?in|zugriffs)[- ]?code/iu },
   // Rabatt- und Gutscheincodes zählen nicht (statt Jahreszahlen auszunehmen: „Your code: 2026“ ist ein Code, Codex-Folgerunde)
-  { name: 'code-ziffern', re: /(^|\D)\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)\d{4,8}(\D|$)/iu, ausser: /(discount|rabatt|gutschein|promo|coupon|voucher|angebot|sale)/iu },
+  { name: 'code-ziffern', re: /(^|\D)\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)\d{4,8}(\D|$)/iu, ausser: /\b(discount|promo|coupon|voucher|sale)\b|rabatt|gutschein|angebot/iu },
   { name: 'kurzwort', re: /\b(otp|tan|pin|passcode|2fa|mfa)\b.*(login|log in|anmeld|sign|konto|account|code|zugang|access|karte|card|\d{4,})|(login|log in|anmeld|sign|konto|account|zugang|access|karte|card).*\b(otp|tan|pin|passcode|2fa|mfa)\b|\b(otp|passcode|2fa|mfa)\b/iu },
   { name: 'zwei-faktor', re: /(two[- ]factor|zwei[- ]faktor|2-step|two-step|zweistufig|multi-factor|(authentication|authentifizierungs?)[- ](code|method|methode|app|verfahren))/iu },
   { name: 'passwort', re: /(passwor[dt]|kennwort)\b.*(reset|zurücksetzen|ändern|change|vergessen|forgot|neu)|(reset|forgot|vergessen|neues)\s+(your\s+|dein\s+|ihr\s+)?(passwor|kennwort)/iu },

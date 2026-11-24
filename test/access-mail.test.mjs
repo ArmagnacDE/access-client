@@ -265,3 +265,16 @@ test('access-mail kennt im Code nur drafts.create über createCheckedDraft (kein
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.bin['access-mail'], 'bin/access-mail.mjs');
 });
+
+test('Codex S112 #4: Anzeigename mit Komma in Anführungszeichen bleibt eine Adresse', async () => {
+  const { addressList } = await import('../src/mail/draft.js');
+  assert.deepEqual(addressList('"Doe, Jane" <jane@example.org>, b@example.org', 'to'), ['"Doe, Jane" <jane@example.org>', 'b@example.org']);
+  assert.throws(() => addressList('"offen <a@b.example>', 'to'), /keine Adresse/);
+});
+
+test('resolveMailbox: Konto mit eigenem Token außerhalb der Delegierungs-Domain behält seinen Zugang', () => {
+  const c = validateConfig({ ...KONFIG, accounts: { ...KONFIG.accounts, privat: { email: 'p@other.example', token: 'token-read-p.json' } } });
+  const a = resolveMailbox(c, 'privat');
+  assert.deepEqual([a.kind, a.file], ['token', 'token-read-p.json']);
+  assert.throws(() => resolveMailbox(c, 'x@other.example'), /nicht in der Domain/);
+});

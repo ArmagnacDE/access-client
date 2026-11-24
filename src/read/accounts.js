@@ -127,6 +127,8 @@ export function resolveMailbox(config, wer) {
   else if (EMAIL.test(w)) email = w;
   else if (NAME.test(w) && md.domains.length === 1) email = `${w}@${md.domains[0]}`;
   else throw new AccessReadError(`Postfach „${w.slice(0, 64)}“ ungültig (Adresse, Kontoname oder Kurzname wie „hello“)`);
+  // Konto mit eigenem Zugang außerhalb der Delegierungs-Domain: sein eigener Zugang (wie ohne mailDelegation)
+  if (!md.domains.includes(email.split('@')[1]) && konto && konto.kind !== 'mail-only') return konto;
   if (!md.domains.includes(email.split('@')[1])) throw new AccessReadError(`Postfach ${email.slice(0, 80)} liegt nicht in der Domain der Mail-Delegierung (${md.domains.join(', ')})`);
   const name = konto?.name ?? Object.values(config.accounts).find((x) => x.email === email)?.name ?? email.split('@')[0];
   return Object.freeze({ name, email, kind: 'delegated', file: md.key });

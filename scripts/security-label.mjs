@@ -51,9 +51,8 @@ for (const mb of boxes) {
     if (!apply) { console.log(`${mb.email}: ${plan.missing.length ? `fehlt ${plan.missing.map((m) => m.name).join(', ')}` : 'vollständig'}`); continue; }
     protokoll.postfaecher.push({ mailbox: mb.email, before: plan.before, created: [] });
     sichern();
-    const r = await applySecurityLabel(t);
-    protokoll.postfaecher.at(-1).created = r.created;
-    sichern();
+    // jede Anlage sofort sichern (Codex S112 #3: scheitert der zweite Filter, stehen Label und erster Filter im Stand)
+    const r = await applySecurityLabel({ ...t, onCreated: (c) => { protokoll.postfaecher.at(-1).created.push(c); sichern(); } });
     console.log(`${mb.email}: ${r.created.length ? `angelegt ${r.created.map((c) => c.name).join(', ')}` : 'schon vollständig'}`);
   } catch (e) { fehler++; console.error(`${mb.email}: FEHLER ${String(e.message).slice(0, 300)}`); }
 }

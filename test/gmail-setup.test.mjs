@@ -70,3 +70,20 @@ test('nur zwei schreibende Endpunkte, nie DELETE, nie ein Versand- oder Weiterle
   }
   await assert.rejects(planSecurityLabel({ ...T, mailbox: 'x/../send', label: 'security-no-read', fetchImpl: f }), /Postfach|Versand/);
 });
+
+test('Codex S112 #2: vorhandener Filter mit zusätzlichen Kriterien (z. B. to) zählt nicht als Schutz', async () => {
+  const f = gmail({ labels: [{ id: 'Label_9', name: 'security-no-read' }],
+    filters: SECURITY_FILTERS.map((x, i) => ({ id: `F${i}`, criteria: { ...x.criteria, to: 'nur@example.org' }, action: { addLabelIds: ['Label_9'] } })) });
+  const p = await planSecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: f });
+  assert.deepEqual(p.missing.map((x) => x.name), ['filter-betreff', 'filter-absender']);
+});
+
+test('Codex S112 #3: jede Anlage wird sofort gemeldet (Teilfehler verliert keine IDs)', async () => {
+  const f = gmail();
+  const inner = f;
+  let n = 0;
+  const brichtAb = async (url, init = {}) => { if ((init.method ?? 'GET') === 'POST' && ++n === 3) return { ok: false, status: 500, json: async () => ({}) }; return inner(url, init); };
+  const gemeldet = [];
+  await assert.rejects(applySecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: brichtAb, onCreated: (c) => gemeldet.push(c.name) }), /API 500/);
+  assert.deepEqual(gemeldet, ['label', 'filter-betreff']);
+});

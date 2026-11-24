@@ -9,10 +9,21 @@ import { createCheckedDraft, GMAIL_COMPOSE, GMAIL_READONLY, gmailGet, headerOf, 
 import { AccessReadError, delegationHint } from '../read/accounts.js';
 
 const ADRESSE = /^[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}$|^[^<>\r\n]*<[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}>$/;
+/** An Komma/Semikolon trennen, aber nicht in Anführungszeichen („"Doe, Jane" <j@x>“, Codex S112 #4). */
+function splitAddresses(t) {
+  const out = []; let cur = ''; let quoted = false;
+  for (const ch of t) {
+    if (ch === '"') quoted = !quoted;
+    if (!quoted && (ch === ',' || ch === ';')) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+const QUOTES_OK = (a) => (a.match(/"/g) ?? []).length % 2 === 0;
 /** Adressliste aus „a@b, c@d“ oder Array; wirft bei Zeilenumbruch oder ungültiger Adresse. */
 export function addressList(v, feld) {
-  const l = (Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map((x) => String(x).trim()).filter(Boolean);
-  for (const a of l) if (/[\r\n]/.test(a) || !ADRESSE.test(a)) throw new AccessReadError(`${feld}: „${a.slice(0, 60).replace(/[\r\n]/g, '⏎')}“ ist keine Adresse`, { usage: true });
+  const l = (Array.isArray(v) ? v : splitAddresses(String(v ?? ''))).map((x) => String(x).trim()).filter(Boolean);
+  for (const a of l) if (/[\r\n]/.test(a) || !QUOTES_OK(a) || !ADRESSE.test(a)) throw new AccessReadError(`${feld}: „${a.slice(0, 60).replace(/[\r\n]/g, '⏎')}“ ist keine Adresse`, { usage: true });
   return l;
 }
 

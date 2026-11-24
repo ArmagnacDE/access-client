@@ -49,7 +49,12 @@ async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
   return j;
 }
 
-const norm = (c) => JSON.stringify({ query: String(c?.query ?? '').trim(), from: String(c?.from ?? '').trim().toLowerCase() });
+// Gleich nur, wenn der Filter GENAU dieses Kriterium hat: ein zusätzliches (to, subject, size, hasAttachment …) schränkt
+// ihn ein und schützt dann nicht alle Mails (Codex S112 #2).
+const norm = (c) => {
+  const extra = Object.keys(c ?? {}).filter((k) => !['query', 'from'].includes(k) && c[k] !== false && c[k] !== '' && c[k] != null);
+  return extra.length ? `eingeschränkt:${extra.join(',')}` : JSON.stringify({ query: String(c?.query ?? '').trim(), from: String(c?.from ?? '').trim().toLowerCase() });
+};
 
 /**
  * Stand eines Postfachs: Label-ID (oder null) und was fehlt. Nur lesend.
@@ -71,8 +76,9 @@ export async function planSecurityLabel({ labelsToken, filtersToken, mailbox, la
   return { mailbox, labelId, missing, before: { labels: labels.length, filters: filters.map((x) => ({ id: x.id, criteria: x.criteria, action: x.action })) } };
 }
 
-/** Legt an, was planSecurityLabel als fehlend meldet. Gibt die angelegten IDs zurück (für den Rückweg von Hand). */
-export async function applySecurityLabel({ labelsToken, filtersToken, mailbox, label, fetchImpl = fetch }) {
+/** Legt an, was planSecurityLabel als fehlend meldet. Gibt die angelegten IDs zurück (für den Rückweg von Hand);
+ *  onCreated meldet jede Anlage sofort, damit ein Teilfehler keine IDs verliert. */
+export async function applySecurityLabel({ labelsToken, filtersToken, mailbox, label, fetchImpl = fetch, onCreated = () => {} }) {
   const plan = await planSecurityLabel({ labelsToken, filtersToken, mailbox, label, fetchImpl });
   const created = [];
   let labelId = plan.labelId;
@@ -81,10 +87,12 @@ export async function applySecurityLabel({ labelsToken, filtersToken, mailbox, l
     if (typeof l.id !== 'string') throw new Error('Gmail-Einrichtung: Label ohne ID angelegt');
     labelId = l.id;
     created.push({ name: 'label', id: l.id });
+    onCreated(created.at(-1));
   }
   for (const m of plan.missing.filter((x) => x.criteria)) {
     const f = await call({ token: filtersToken, mailbox, path: 'settings/filters', method: 'POST', fetchImpl, body: { criteria: m.criteria, action: { addLabelIds: [labelId] } } });
     created.push({ name: m.name, id: f.id ?? null });
+    onCreated(created.at(-1));
   }
   return { mailbox, labelId, created, before: plan.before };
 }

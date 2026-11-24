@@ -49,6 +49,7 @@ const SEND_ALLOW = [
 const DIRECT_GMAIL = /gmail\.googleapis\.com|www\.googleapis\.com\/gmail/i;
 const DIRECT_ALLOW = {
   'src/gmail.js': 'die Hülle selbst',
+  'src/gmail-filter-cleanup.js': 'alte Betreff-Sperrfilter entfernen (S137, nur per Freigabe): GET/POST settings/filters und DELETE settings/filters/<id>, über assertNoSend; test/filter-cleanup.test.mjs',
   'src/gmail-setup.js': 'Einrichtung Sperr-Label (S112, A694 a): nur GET/POST auf labels und settings/filters, über assertNoSend; test/gmail-setup.test.mjs. Dazu nur lesend für den Mail-Wächter: Einstellungen (S114) und die Absender-Liste (readAbsender, A800 a, test/s123-followup.test.mjs)',
 };
 

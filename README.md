@@ -225,6 +225,14 @@ Vorher-Stand und die neuen IDs landen in `~/.local/state/access-client/security-
 zeigt sie für das Entfernen von Hand. Braucht in der Delegierung zusätzlich `gmail.labels` und `gmail.settings.basic`.
 Neues Postfach: `--mailbox <adresse>`.
 
+**Alte Betreff-Filter entfernen (ab v1.5.2):** Jede neue Liste legt neue Filter an, die alten bleiben. `--remove-old
+<stand-datei>` (Dry-Run ist Standard, `--apply` löscht) nimmt aus dem Vorher-Stand eines `--apply`-Laufs genau die reinen
+Betreff-Sperrfilter früherer Listen (nur `subject:("password reset" …)`, Aktion nur das Sperr-Label, nicht die aktuellen),
+löscht nur, wenn sie unverändert im Postfach stehen und alle aktuellen Filter mit demselben Label da sind, und sichert
+jeden Filter vorher nach `~/.local/state/access-client/security-label-removed-<zeit>.json` (600). Rückweg:
+`--restore <diese-datei> --apply` legt sie wieder an. Löschen ist eine feste Grenze: `--apply` nur mit Freigabe des
+Inhabers. Braucht nur `gmail.settings.basic`.
+
 ## Mail-Wächter: `mail-guard` (ab v1.4.0)
 
 Prüft je Postfach, was der Generalschlüssel (delegiertes Dienstkonto auf alle Postfächer) anrichten könnte und was die
@@ -295,6 +303,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.5.2) `--remove-old`/`--restore` in `scripts/security-label.mjs` (`gmail-filter-cleanup`).
 - neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
   „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); dazu „two-step verification“, „two-step login“,
   „zweistufige Authentifizierung“, „vérifier votre identité“. Der Betreff steht jetzt auf **mehreren Filtern**

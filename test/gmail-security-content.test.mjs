@@ -54,8 +54,8 @@ test('eine Liste: Filter der Einrichtung und Wächter nutzen dieselben Betreffe 
     'Sicherheitswarnung: Anmeldung mit neuem Gerät']) assert.ok(isSecurityMail({ from: 'x@y.example', subject }), subject);
   assert.ok(SECURITY_FILTERS[0].criteria.query.length < 1400, 'Gmail-Filter bleibt unter der Längengrenze');
   assert.deepEqual(SECURITY_SENDERS, ['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com', 'appleid@id.apple.com', 'security@facebookmail.com']);
-  // S137: Einzelwörter ohne Anführungszeichen
-  assert.equal(SECURITY_FILTERS[0].criteria.query, `subject:(${SECURITY_SUBJECTS.map((s) => (/^[\p{L}\p{N}]+$/u.test(s) ? s : `"${s}"`)).join(' OR ')})`);
+  // S137: Einzelwörter mit +
+  assert.equal(SECURITY_FILTERS[0].criteria.query, `subject:(${SECURITY_SUBJECTS.map((s) => (/^[\p{L}\p{N}]+$/u.test(s) ? `+${s}` : `"${s}"`)).join(' OR ')})`);
   assert.equal(SECURITY_FILTERS[1].criteria.from, SECURITY_SENDERS.join(' OR '));
   assert.equal(securityExclusionQuery(), `-${SECURITY_FILTERS[0].criteria.query} -from:(${SECURITY_SENDERS.join(' OR ')})`);
 });

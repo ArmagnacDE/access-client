@@ -85,3 +85,24 @@ test('finish: falsches Google-Konto, mehr Rechte, fremder state oder kein refres
   assert.equal(calls.length, 0, 'ohne passenden state kein Token-Abruf');
   assert.equal(existsSync(path.join(u.gdir, ACCOUNT.file)), false);
 });
+
+test('finish: unbekannter Fehlercode aus der URL erscheint nicht wörtlich; bekannter schon (Codex S137)', async () => {
+  const u = umgebung();
+  startReadToken(ACCOUNT, u.opts);
+  await assert.rejects(finishReadToken(ACCOUNT, 'http://127.0.0.1:8765/?error=synthetic-secret', { ...u.opts, fetchImpl: async () => { throw new Error('nie'); } }),
+    (e) => !e.message.includes('synthetic') && /Google/.test(e.message));
+  await assert.rejects(finishReadToken(ACCOUNT, 'http://127.0.0.1:8765/?error=access_denied', { ...u.opts, fetchImpl: async () => { throw new Error('nie'); } }), /access_denied/);
+});
+
+test('finish: ein neuer start während des Tauschs bleibt erhalten (Codex S137)', async () => {
+  const u = umgebung();
+  const r = startReadToken(ACCOUNT, u.opts);
+  const state = new URL(r.url).searchParams.get('state');
+  let neu;
+  const fetchImpl = async () => {
+    neu = startReadToken(ACCOUNT, { ...u.opts, random: (n) => Buffer.alloc(n, 9) }); // Inhaber startet parallel neu
+    return { ok: true, status: 200, json: async () => ({ access_token: 'a', refresh_token: 'r', scope: READ_TOKEN_SCOPES.join(' '), id_token: idToken('owner@example.org') }) };
+  };
+  await finishReadToken(ACCOUNT, `http://127.0.0.1:8765/?state=${state}&code=4/abc`, { ...u.opts, fetchImpl });
+  assert.ok(existsSync(neu.pending), 'Zwischenstand des neuen Starts nicht gelöscht');
+});

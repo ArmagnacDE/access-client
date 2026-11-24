@@ -10,7 +10,7 @@
 // zeigt „nicht erreichbar“, die Adresszeile enthält den einmaligen Code. Der Code allein ist ohne den Verifier aus dem
 // Zwischenstand (nur auf dieser Maschine) wertlos und verfällt nach Minuten.
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { assertScopesWithin, netzGrund } from './google-auth.js';
@@ -28,11 +28,17 @@ const pendingFile = (stateDir, account) => join(stateDir, `read-token-${account.
 const clientOf = (oc) => { const w = oc?.installed || oc?.web || oc; if (!w?.client_id) throw new Error('oauth-client.json ohne client_id'); return w; };
 const b64url = (b) => Buffer.from(b).toString('base64url');
 
-/** Neue Datei mit Rechten 600; wirft, wenn sie schon existiert (O_EXCL). */
+/** Neue Datei mit Rechten 600; wirft, wenn sie schon existiert (O_EXCL). Vollständig geschrieben (writeFileSync auf dem
+ *  Deskriptor, Codex S137: writeSync kann kurz schreiben); scheitert das Schreiben, wird die halbe Datei entfernt. */
 function schreibeNeu(datei, inhalt) {
   const fd = openSync(datei, 'wx', 0o600);
-  try { writeSync(fd, inhalt); } finally { closeSync(fd); }
+  try { writeFileSync(fd, inhalt); } catch (e) { closeSync(fd); rmSync(datei, { force: true }); throw e; }
+  closeSync(fd);
 }
+// Nur bekannte OAuth-Fehlercodes erscheinen wörtlich (Codex S137: sonst beliebiger Text aus der URL in der Meldung).
+const OAUTH_FEHLER = new Set(['access_denied', 'invalid_request', 'invalid_scope', 'unauthorized_client', 'server_error',
+  'temporarily_unavailable', 'invalid_grant', 'invalid_client', 'unsupported_grant_type', 'admin_policy_enforced', 'org_internal']);
+const fehlerCode = (x) => (OAUTH_FEHLER.has(String(x)) ? String(x) : 'unbekannter Fehler');
 
 function ziel(account, googleDir) {
   if (!account?.file || account.kind === 'delegated' || account.kind === 'mail-only') throw new Error(`Konto ${account?.name}: kein OAuth-Token-Konto (in read.json „token“ setzen)`);
@@ -75,7 +81,7 @@ export async function finishReadToken(account, redirectUrl, { googleDir, stateDi
   try { p = JSON.parse(readFileSync(pending, 'utf8')); } catch (e) { throw new Error(`kein Zwischenstand für ${account.name} (${e.code ?? 'ungültig'}): erst „start“`); }
   let u;
   try { u = new URL(String(redirectUrl).trim()); } catch { throw new Error('Weiterleitungs-URL nicht lesbar'); }
-  if (u.searchParams.get('error')) throw new Error(`Google: ${u.searchParams.get('error').replace(/[^\w.-]/g, '').slice(0, 60)}`);
+  if (u.searchParams.get('error')) throw new Error(`Google: ${fehlerCode(u.searchParams.get('error'))}`);
   if (u.searchParams.get('state') !== p.state) throw new Error('state passt nicht zum Zwischenstand (andere oder alte Anmeldung); nichts getauscht');
   const code = u.searchParams.get('code');
   if (!code) throw new Error('Weiterleitungs-URL ohne code');
@@ -87,7 +93,7 @@ export async function finishReadToken(account, redirectUrl, { googleDir, stateDi
   try { res = await fetchImpl(TOKEN_URL, { method: 'POST', body, redirect: 'error', signal: AbortSignal.timeout(20_000) }); } catch (e) { throw new Error(`Token-Endpunkt ${netzGrund(e)}`); }
   let json;
   try { json = await res.json(); } catch { throw new Error(`Token-Endpunkt: Antwort kein JSON (HTTP ${res.status})`); }
-  if (!res.ok) throw new Error(`Token-Tausch abgelehnt: ${String(json?.error ?? res.status).replace(/[^\w.-]/g, '').slice(0, 60)}`);
+  if (!res.ok) throw new Error(`Token-Tausch abgelehnt: ${json?.error ? fehlerCode(json.error) : `HTTP ${res.status}`}`);
   const scope = typeof json.scope === 'string' ? json.scope.trim() : '';
   if (!scope) throw new Error('Google meldet keine Scopes; nichts geschrieben');
   assertScopesWithin(scope, READ_TOKEN_SCOPES, 'Lese-Token');
@@ -97,6 +103,7 @@ export async function finishReadToken(account, redirectUrl, { googleDir, stateDi
   try { email = String(JSON.parse(Buffer.from(String(json.id_token).split('.')[1], 'base64url').toString('utf8')).email ?? '').toLowerCase(); } catch { /* unten */ }
   if (email !== String(account.email).toLowerCase()) throw new Error(`Anmeldung mit anderem Konto (${email ? email.replace(/^[^@]*/, '…') : 'unbekannt'}) als ${account.email}; nichts geschrieben`);
   schreibeNeu(target, JSON.stringify({ refresh_token: json.refresh_token, scope, token_uri: TOKEN_URL }));
-  rmSync(pending, { force: true });
+  // nur den eigenen Zwischenstand entfernen; ein paralleler neuer start bleibt (Codex S137)
+  try { if (JSON.parse(readFileSync(pending, 'utf8')).state === p.state) rmSync(pending, { force: true }); } catch { /* schon weg */ }
   return { target, scope, email };
 }

@@ -295,7 +295,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
 - neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
-  „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); Einzelwörter im Betreff-Filter ohne
+  „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); Einzelwörter im Betreff-Filter mit „+“ statt
   Anführungszeichen (Länge). Achtung: Der Betreff-Filter ändert sich, `scripts/security-label.mjs --apply` legt ihn
   neu an; den alten Filter (mit „two-step“) entfernt der Inhaber von Hand (das Skript löscht nichts).
 - neu (v1.5.0) Merkmal-Liste um Varianten und Französisch ergänzt (A782 a); To/Cc mit Anzeigenamen nach RFC 2047

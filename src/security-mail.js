@@ -37,9 +37,9 @@ export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your pa
 export const SECURITY_SENDERS = Object.freeze(['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com',
   'appleid@id.apple.com', 'security@facebookmail.com']);
 
-// Einzelwörter ohne Anführungszeichen (gleiche Bedeutung in der Gmail-Suche, spart Länge: Filter bleibt unter 1400
-// Zeichen, S137); alles mit Leerzeichen, Bindestrich oder Satzzeichen bleibt Phrase in Anführungszeichen.
-const suchwort = (s) => (/^[\p{L}\p{N}]+$/u.test(s) ? s : `"${s}"`);
+// Einzelwörter mit „+“ (laut Gmail-Hilfe exakter Worttreffer wie Anführungszeichen, aber kürzer: Filter bleibt unter 1400
+// Zeichen, S137, Codex); alles mit Leerzeichen, Bindestrich oder Satzzeichen bleibt Phrase in Anführungszeichen.
+const suchwort = (s) => (/^[\p{L}\p{N}]+$/u.test(s) ? `+${s}` : `"${s}"`);
 export const SUBJECT_QUERY = `subject:(${SECURITY_SUBJECTS.map(suchwort).join(' OR ')})`;
 export const SENDER_QUERY = SECURITY_SENDERS.join(' OR ');
 

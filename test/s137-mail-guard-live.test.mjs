@@ -16,8 +16,9 @@ test('two-step: nur mit Anmelde-Bezug (authentication; 2-Step Verification steht
   assert.ok(!SECURITY_SUBJECTS.includes('two-step'));
 });
 
-test('Gmail-Filter: Einzelwörter ohne Anführungszeichen, Phrasen mit; unter der Längengrenze', () => {
-  assert.match(SUBJECT_QUERY, / OR 2FA OR /);
+test('Gmail-Filter: Einzelwörter mit + (dokumentierter exakter Worttreffer), Phrasen in Anführungszeichen; unter der Längengrenze', () => {
+  assert.match(SUBJECT_QUERY, / OR \+2FA OR /);
+  assert.match(SUBJECT_QUERY, / OR \+Sicherheitswarnung OR /);
   assert.match(SUBJECT_QUERY, / OR "two-step authentication" OR /);
   assert.match(SUBJECT_QUERY, / OR "Multi-Faktor" OR /, 'mit Bindestrich bleibt die Phrase in Anführungszeichen');
   assert.ok(SUBJECT_QUERY.length < 1400, `Länge ${SUBJECT_QUERY.length}`);

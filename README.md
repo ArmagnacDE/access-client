@@ -19,6 +19,8 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
 | `access-client/op-read` | `op read`, `op vault get` und `op item get` (Kopf, Einmal-Code) an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
+| `access-client/security-mail` | Merkmale von Sicherheitsmails (Betreffe, Absender): eine Liste für Gmail-Filter und Wächter (ab v1.3.0) |
+| `access-client/gmail-setup` | Sperr-Label und Filter je Postfach anlegen, nur Fehlendes, nie löschen (ab v1.3.0) |
 | `access-client/mail` | `draftMail`: ein Mail-Entwurf über das delegierte Dienstkonto, auch als Antwort in einen Verlauf; der Kern von `access-mail` (ab v1.3.0) |
 | `access-client/read/google` | nur lesende Drive- und Sheets-Aufrufe mit übergebenem Token (nur GET auf feste Pfade), dieselben, die `access-read` nutzt; für Werkzeuge, die ihr Token selbst holen, z. B. OpenClaw-Lesewerkzeuge (ab v1.2.0) |
 

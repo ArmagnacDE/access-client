@@ -14,8 +14,10 @@
     "./op-read": "./src/op-read.js",
     "./read": "./src/read/cli.js",
     "./read/google": "./src/read/google-read.js",
-    "./package.json": "./package.json",
-    "./mail": "./src/mail/draft.js"
+    "./mail": "./src/mail/draft.js",
+    "./security-mail": "./src/security-mail.js",
+    "./gmail-setup": "./src/gmail-setup.js",
+    "./package.json": "./package.json"
   },
   "bin": {
     "access-read": "bin/access-read.mjs",

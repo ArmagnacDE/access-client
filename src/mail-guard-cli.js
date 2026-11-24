@@ -128,12 +128,16 @@ export async function run(argv, deps = {}) {
     try {
       const state = cmd === 'propose' ? null : readState(stateDir, mb, readFile);
       // propose: wie ein Grundstand-Lauf über --days (lernt nur, meldet Kandidaten); nie gespeichert
-      const r = await scanMailbox({ token: await getToken(mb), mailbox: mb, state, now, days, learnDays: cmd === 'propose' ? 1 : learnDays, maxMessages: cmd === 'propose' ? 1000 : 300, fetchImpl });
+      const r = await scanMailbox({ token: await getToken(mb), mailbox: mb, state, now, days, learnDays: cmd === 'propose' ? 1 : learnDays, maxMessages: cmd === 'propose' ? 2000 : 1000, fetchImpl });
       results.push(r);
+      if (r.incomplete) unlesbar++;
       log(`${mb}: ${r.baseline && cmd === 'check' ? 'Grundstand angelegt · ' : ''}${Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(' · ')}${r.truncated ? ' · gekürzt (zu viele Treffer)' : ''}`);
     } catch (e) {
       unlesbar++;
-      err(`${mb}: NICHT GEPRÜFT ${redact(String(e?.message)).slice(0, 300)}`);
+      const grund = redact(String(e?.message)).slice(0, 300);
+      err(`${mb}: NICHT GEPRÜFT ${grund}`);
+      // in die Meldung, damit ein Ausfall nicht nur im Log steht (Codex S114 #4); kein Zustand für dieses Postfach
+      results.push({ mailbox: mb, findings: [{ kind: 'error', detail: grund.slice(0, 120) }], state: null });
     }
   }
 
@@ -144,7 +148,7 @@ export async function run(argv, deps = {}) {
   }
 
   const n = formatNotification(results);
-  if (n) log(`${n.title}\n${n.body}`);
+  if (n) log(`${n.title}\n${n.lines.join('\n')}`);
   else log('Mail-Wächter: keine Befunde');
   if (opt['dry-run']) { log('Dry-Run: nichts gespeichert, nichts gemeldet'); return unlesbar ? 3 : 0; }
   if (n) {
@@ -153,6 +157,6 @@ export async function run(argv, deps = {}) {
     if (!url) { err(`mail-guard: ${varName} nicht gesetzt; Befunde nicht gemeldet, Zustand nicht gespeichert`); return 1; }
     try { await notify(url, n, fetchImpl); } catch (e) { err(`mail-guard: ${e.message}; Zustand nicht gespeichert (nächster Lauf meldet erneut)`); return 1; }
   }
-  for (const r of results) writeState(stateDir, r.mailbox, r.state, fs);
+  for (const r of results) if (r.state) writeState(stateDir, r.mailbox, r.state, fs);
   return unlesbar ? 3 : 0;
 }

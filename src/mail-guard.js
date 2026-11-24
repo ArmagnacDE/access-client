@@ -24,19 +24,23 @@
 import { createHash } from 'node:crypto';
 import { emailOf, gmailGet, gmailGuardConfig, GmailBlockedError, headerOf, listMessageIds } from './gmail.js';
 import { isSecurityFilter, missingSecurityParts, readMailSettings } from './gmail-setup.js';
-import { isSecurityMail } from './security-mail.js';
+import { isSecurityMail, SENDER_QUERY, SUBJECT_QUERY } from './security-mail.js';
 
 const TAG = 86_400_000;
 const UEBERLAPPUNG_MS = 2 * 3_600_000; // je Lauf etwas zurück, doppelte Meldungen verhindert `reported`
-const MAX_FENSTER_MS = 7 * TAG;
-const REPORTED_MAX = 2000;
+const REPORTED_MAX = 5000;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
+/** JSON mit sortierten Schlüsseln und sortierten Text-Listen (Label-IDs): gleicher Inhalt → gleicher Hash. */
+const kanonisch = (v) => (Array.isArray(v) ? (v.every((x) => typeof x === 'string') ? [...v].sort() : v.map(kanonisch))
+  : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, kanonisch(v[k])])) : v);
+const stabil = (v) => JSON.stringify(kanonisch(v));
 const hdr = (headers, name) => (headers ?? []).find((h) => String(h?.name).toLowerCase() === name.toLowerCase())?.value ?? '';
 
 /** Betreff für Meldungen: eine Zeile, Ziffernfolgen ab 4 maskiert (Codes stehen oft im Betreff), höchstens 32 Zeichen. */
 export function maskSubject(s, max = 32) {
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim().replace(/\d{4,}/g, '••••');
+  // Adressen zuerst auf die Domain kürzen (Codex S114 #5), dann Ziffern maskieren
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim().replace(/[^\s<>"@]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, (_, d) => `•@${d}`).replace(/\d{4,}/g, '••••');
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
@@ -55,10 +59,14 @@ export function domainOf(value) {
  * X-Mailer), Host der Message-ID, Form der MIME-Grenze (Hex-Folgen als #; „-“ = einteilig).
  */
 export function sentFingerprint(headers) {
-  const ua = (hdr(headers, 'User-Agent') || hdr(headers, 'X-Mailer')).replace(/\s*\(.*$/, '').replace(/[/ ]?v?\d[\w.]*/g, '').trim().slice(0, 30) || '-';
-  const host = (/@([^>\s]+)>?\s*$/.exec(hdr(headers, 'Message-ID'))?.[1] ?? '-').toLowerCase().replace(/[0-9a-f]{8,}/g, '#').replace(/\d+/g, '#');
+  // nur begrenzte, normalisierte Merkmale, keine freien Kopftexte (Codex S114 #5): Client-Name ohne Version und ohne
+  // Adressen, vom Host der Message-ID nur die Domain (letzte zwei Teile), Ziffern und Hex-Folgen als #
+  const ua = (hdr(headers, 'User-Agent') || hdr(headers, 'X-Mailer')).replace(/\S*@\S*/g, '').replace(/\s*\(.*$/, '')
+    .replace(/[/ ]?v?\d[\w.]*/g, '').replace(/[^A-Za-z0-9 ._-]/g, '').trim().slice(0, 30) || '-';
+  const roh = (/@([^>\s]+)>?\s*$/.exec(hdr(headers, 'Message-ID'))?.[1] ?? '').toLowerCase().replace(/[^a-z0-9.-]/g, '');
+  const host = roh ? roh.split('.').filter(Boolean).slice(-2).join('.').replace(/[0-9a-f]{8,}/g, '#').replace(/\d+/g, '#') : '-';
   const grenze = /boundary="?([^";]+)"?/i.exec(hdr(headers, 'Content-Type'))?.[1];
-  const form = grenze ? grenze.replace(/[0-9A-Fa-f]+/g, '#').slice(0, 24) : '-';
+  const form = grenze ? grenze.replace(/[0-9A-Fa-f]+/g, '#').replace(/[^A-Za-z#=_.+-]/g, '').slice(0, 24) : '-';
   return `ua:${ua} id@${host} b:${form}`;
 }
 
@@ -66,9 +74,10 @@ export function sentFingerprint(headers) {
 // sperren. Wortgrenzen nur an ASCII-Stellen (\b kennt keine Umlaute).
 const KANDIDATEN = Object.freeze([
   { name: 'code-wort', re: /(zugangs|bestätigungs|sicherheits|verifizierungs|anmelde|einmal|login|access|security|verification|authentication|auth|confirmation|sign-?in|zugriffs)[- ]?code/iu },
-  { name: 'code-ziffern', re: /(^|\D)\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)\d{4,8}(\D|$)|(^|\D)\d{4,8}\s+(ist|is)\s/iu },
-  { name: 'kurzwort', re: /\b(otp|tan|pin|passcode|2fa|mfa)\b/iu },
-  { name: 'zwei-faktor', re: /(two[- ]factor|zwei[- ]faktor|2-step|zweistufig|authenticat|authentifizier)/iu },
+  // Jahreszahlen zählen nicht als Code („discount code 2026“)
+  { name: 'code-ziffern', re: /(^|\D)(?!(19|20)\d\d(\D|$))\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)(?!(19|20)\d\d(\D|$))\d{4,8}(\D|$)|(^|\D)\d{4,8}\s+(ist|is)\s/iu },
+  { name: 'kurzwort', re: /\b(otp|tan|pin|passcode|2fa|mfa)\b.*(login|log in|anmeld|sign|konto|account|code|zugang|access|karte|card|\d{4,})|(login|log in|anmeld|sign|konto|account|zugang|access|karte|card).*\b(otp|tan|pin|passcode|2fa|mfa)\b|\b(otp|passcode|2fa|mfa)\b/iu },
+  { name: 'zwei-faktor', re: /(two[- ]factor|zwei[- ]faktor|2-step|two-step|zweistufig|multi-factor|(authentication|authentifizierungs?)[- ](code|method|methode|app|verfahren))/iu },
   { name: 'passwort', re: /(passwor[dt]|kennwort)\b.*(reset|zurücksetzen|ändern|change|vergessen|forgot|neu)|(reset|forgot|vergessen|neues)\s+(your\s+|dein\s+|ihr\s+)?(passwor|kennwort)/iu },
   { name: 'bestaetigen', re: /\b(confirm|verify|bestätige|bestätigen|verifiziere|verifizieren)\b.*(e-?mail|adresse|address|konto|account|anmeldung|login|sign[- ]?in|identit)/iu },
   { name: 'neue-anmeldung', re: /\b(neue[rs]?|new)\s+(anmeldung|sign[- ]?in|login|gerät|device)/iu },
@@ -90,7 +99,9 @@ const SUCHWOERTER = ['code', 'codes', 'verification', 'verify', 'verifizieren', 
   'tan', 'passcode', 'authentication', 'authentifizierung', '2fa', 'mfa', '"two-factor"', '"security alert"', 'sicherheitswarnung',
   'sicherheitshinweis', 'zugangscode', 'sicherheitscode', 'bestätigungscode', 'verifizierungscode', 'einmalcode', 'anmeldecode',
   'zugriffscode', '"neues gerät"', '"new device"', 'unusual', 'link'];
-export const CANDIDATE_QUERY = `subject:(${SUCHWOERTER.join(' OR ')}) -in:sent -in:drafts -in:chats`;
+// Vereinigung mit den Merkmalen der Liste (Betreffe UND Absender) und Spam/Papierkorb (Codex S114 #6): sonst fände der
+// Wächter Listen-Treffer ohne Label nicht, deren Betreff kein Suchwort enthält.
+export const CANDIDATE_QUERY = `(subject:(${SUCHWOERTER.join(' OR ')}) OR ${SUBJECT_QUERY} OR from:(${SENDER_QUERY})) in:anywhere -in:sent -in:drafts -in:chats`;
 
 const ACTION_LABEL = { TRASH: 'löschen', SPAM: 'als Spam', IMPORTANT: 'wichtig', STARRED: 'Stern' };
 function filterSummary(f, labelNames) {
@@ -112,7 +123,7 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   const put = (key, summary, domain = null) => { out[key] = { summary, ...(domain ? { domain } : {}) }; };
   const labelNames = new Map((snap.labels ?? []).map((l) => [l.id, String(l.name ?? '').toLowerCase().replace(/\s+/g, '-') === label ? 'sperr' : 'andere']));
   for (const f of snap.filters ?? []) {
-    put(`filter:${sha(JSON.stringify([f?.criteria ?? {}, f?.action ?? {}]))}`, filterSummary(f, labelNames), f?.action?.forward ? domainOf(f.action.forward) : null);
+    put(`filter:${sha(stabil([f?.criteria ?? {}, f?.action ?? {}]))}`, filterSummary(f, labelNames), f?.action?.forward ? domainOf(f.action.forward) : null);
   }
   for (const w of snap.forwardingAddresses ?? []) {
     const d = domainOf(w?.forwardingEmail);
@@ -123,8 +134,12 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
     const d = domainOf(af.emailAddress);
     put(`autoForwarding:${sha(`${String(af.emailAddress).toLowerCase()}|${af.disposition}`)}`, `Automatische Weiterleitung an @${d} (${af.disposition ?? '?'})`, d);
   } else put('autoForwarding:aus', 'Automatische Weiterleitung aus');
-  put(`imap:${Boolean(snap.imap?.enabled)}`, `IMAP ${snap.imap?.enabled ? 'an' : 'aus'}`);
-  put(`pop:${String(snap.pop?.accessWindow ?? '?')}`, `POP ${snap.pop?.accessWindow ?? '?'}`);
+  // alle Felder, auch Löschverhalten (Codex S114 #7: expungeBehavior, autoExpunge, maxFolderSize, POP disposition)
+  const felder = (o, ohne) => Object.entries(kanonisch(o ?? {})).filter(([k]) => k !== ohne).map(([k, v]) => `${k} ${v}`).join(', ');
+  const imap = snap.imap ?? {};
+  put(`imap:${sha(stabil(imap))}`, `IMAP ${imap.enabled ? 'an' : 'aus'}${felder(imap, 'enabled') ? ` (${felder(imap, 'enabled')})` : ''}`);
+  const pop = snap.pop ?? {};
+  put(`pop:${sha(stabil(pop))}`, `POP ${pop.accessWindow ?? '?'}${felder(pop, 'accessWindow') ? ` (${felder(pop, 'accessWindow')})` : ''}`);
   for (const x of snap.delegates ?? []) {
     const d = domainOf(x?.delegateEmail);
     put(`delegate:${sha(`${String(x?.delegateEmail).toLowerCase()}|${x?.verificationStatus}`)}`, `Delegierung an @${d} (${x?.verificationStatus ?? '?'})`, d);
@@ -160,7 +175,7 @@ async function kopf({ token, mailbox, id, headers, fetchImpl }) {
  * Abdrücke der Gesendeten der letzten learnDays Tage werden gelernt, nicht gemeldet). Wirft, wenn das Postfach nicht
  * lesbar ist (dann kein neuer Zustand). Gibt Befunde und den neuen Zustand zurück; speichern tut der Aufrufer.
  */
-export async function scanMailbox({ token, mailbox, state, now = Date.now(), days = 2, learnDays = 60, maxMessages = 300, fetchImpl = fetch }) {
+export async function scanMailbox({ token, mailbox, state, now = Date.now(), days = 2, learnDays = 60, maxMessages = 1000, fetchImpl = fetch }) {
   const label = gmailGuardConfig()?.blockedLabel;
   if (!label) throw new Error('Mail-Wächter: Gmail-Wächter nicht konfiguriert (configureGmailGuard)');
   const baseline = !state;
@@ -170,11 +185,16 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
   const snap = await readMailSettings({ token, mailbox, fetchImpl });
   const { missing } = missingSecurityParts({ labels: snap.labels, filters: snap.filters, label, mailbox });
   if (missing.length) findings.push({ kind: 'setup', detail: `fehlt ${missing.map((m) => m.name).join(', ')}` });
+  // Ohne Sperr-Label liest kein Inhaltspfad (requireLabel): Befund melden, Stand nicht anfassen (Codex S114 #4)
+  if (missing.some((m) => m.name === 'label')) {
+    return { mailbox, baseline, findings, incomplete: true, truncated: false, counts: { filters: snap.filters.length, findings: findings.length }, state: state ?? null };
+  }
   const items = settingsItems(snap, { label });
   if (!baseline) for (const d of diffSettings(state.settings, items)) findings.push({ kind: 'settings', change: d.change, summary: d.summary, ...(d.domain ? { domain: d.domain } : {}) });
 
   const seit = (ms) => `after:${Math.floor(ms / 1000)}`;
-  const fenster = baseline ? null : Math.max(Number(state.lastRun) - UEBERLAPPUNG_MS, now - MAX_FENSTER_MS);
+  // Ganzer Rückstand seit dem letzten gespeicherten Lauf, nicht gekappt (Codex S114 #2): ein Meldungsausfall verliert nichts
+  const fenster = baseline ? null : Number(state.lastRun) - UEBERLAPPUNG_MS;
 
   // 2. Gesendete
   const known = baseline ? {} : { ...(state.sent?.known ?? {}) };
@@ -209,11 +229,16 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
     findings.push({ kind: liste ? 'security-list' : 'security', id, date: datum(m.at), domain: domainOf(s.from), subject: maskSubject(s.subject), ...(k ? { detail: k.pattern } : {}) });
   }
 
+  // Gekürzte Liste (Codex S114 #1): Befund, und das Zeitfenster bleibt offen (lastRun alt), damit nichts dauerhaft
+  // übersprungen wird; was schon geprüft ist, steht in reported. BEWUSST NICHT UMGESETZT: ein gekürzter Grundstand
+  // (mehr als maxMessages Gesendete in learnDays) lernt nur die neuesten; Folge sind höchstens Fehlalarme, kein Verlust.
+  const truncated = gesendet.truncated || kandidaten.truncated;
+  if (truncated) findings.push({ kind: 'error', detail: `zu viele Treffer (über ${maxMessages}), Prüffenster bleibt offen` });
+  const lastRun = truncated && !baseline ? Number(state.lastRun) : now;
   return {
-    mailbox, baseline, findings,
-    truncated: gesendet.truncated || kandidaten.truncated,
+    mailbox, baseline, findings, truncated, incomplete: truncated && !baseline,
     counts: { filters: snap.filters.length, settings: Object.keys(items).length, sentChecked, fingerprints: Object.keys(known).length, securityChecked, findings: findings.length },
-    state: { version: 1, mailbox, lastRun: now, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
+    state: { version: 1, mailbox, lastRun, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
   };
 }
 
@@ -231,13 +256,15 @@ function zeile(mb, f) {
   }
 }
 
-/** ntfy-Meldung aus den Ergebnissen aller Postfächer, oder null ohne Befund. Höchstens 15 Zeilen. */
+/** ntfy-Meldung aus den Ergebnissen aller Postfächer, oder null ohne Befund. Höchstens 15 Zeilen, Lautes zuerst;
+ *  `lines` trägt alle Zeilen fürs Log (Codex S114 #3). */
 export function formatNotification(results, { maxLines = 15 } = {}) {
   const alle = results.flatMap((r) => r.findings.map((f) => ({ mb: r.mailbox, f })));
   if (!alle.length) return null;
+  alle.sort((a, b) => Number(LAUT.has(b.f.kind)) - Number(LAUT.has(a.f.kind)));
   const zeilen = alle.map(({ mb, f }) => zeile(mb, f));
   const body = zeilen.slice(0, maxLines).join('\n') + (zeilen.length > maxLines ? `\n+${zeilen.length - maxLines} weitere (Log des Jobs)` : '');
-  return { title: `Mail-Wächter: ${alle.length} Befund${alle.length === 1 ? '' : 'e'}`, body, priority: alle.some(({ f }) => LAUT.has(f.kind)) ? '4' : '3' };
+  return { title: `Mail-Wächter: ${alle.length} Befund${alle.length === 1 ? '' : 'e'}`, body, lines: zeilen, priority: alle.some(({ f }) => LAUT.has(f.kind)) ? '4' : '3' };
 }
 
 /** Vorschlag für die Merkmal-Liste aus Kandidaten: je Absender-Domain Anzahl, Muster, Beispiel-Betreffe (maskiert). */

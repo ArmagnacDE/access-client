@@ -233,7 +233,10 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - **Merkmal-Liste ergänzen:** `propose --days 90` zeigt Kandidaten je Domain (Muster, maskierte Betreffe), schreibt
   nichts. Die Liste wird per PR in `src/security-mail.js` erweitert, danach `scripts/security-label.mjs --apply` (nach
   Freigabe); der Wächter ergänzt keine Filter.
-- Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht lesbar.
+- **Nichts geht still verloren:** Das Prüffenster reicht immer bis zum letzten gespeicherten Lauf zurück (nicht gekappt);
+  mehr als 1000 Treffer, ein fehlendes Sperr-Label oder ein nicht lesbares Postfach stehen als Befund in der Meldung, und
+  das Fenster bleibt offen. Die Meldung zeigt Lautes zuerst, das Log alle Zeilen.
+- Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht (vollständig) geprüft.
 
 ## Änderungen gegenüber der Herkunft
 

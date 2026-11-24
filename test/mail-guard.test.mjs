@@ -23,8 +23,8 @@ const API = H({ 'Message-ID': '<CAMy8g=def456@mail.gmail.com>', 'Content-Type': 
 
 test('Fingerabdruck: Client ohne Version, Message-ID-Host, Form der MIME-Grenze', () => {
   assert.equal(sentFingerprint(EM), 'ua:eMClient id@example.org b:------=_M#-#-#-#-#');
-  assert.equal(sentFingerprint(WEB), 'ua:- id@mail.gmail.com b:#');
-  assert.equal(sentFingerprint(API), 'ua:- id@mail.gmail.com b:-');
+  assert.equal(sentFingerprint(WEB), 'ua:- id@gmail.com b:#');
+  assert.equal(sentFingerprint(API), 'ua:- id@gmail.com b:-');
   assert.notEqual(sentFingerprint(API), sentFingerprint(WEB), 'einteilige Mail ohne Client-Kopf ist nicht Gmail im Browser');
   // Versand-Dienste mit wechselnden internen Hostnamen (hello@, Probelauf 24.11.): ein Abdruck, nicht einer je Server
   const a = H({ 'Message-ID': '<1.2@ip-10-2-179-78>', 'X-Mailer': 'lxo', 'Content-Type': 'multipart/mixed; boundary="----=_Part_1_2.3"' });
@@ -106,7 +106,7 @@ test('erster Lauf legt den Grundstand an und meldet nichts; zweiter Lauf meldet 
   const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: f1 });
   assert.equal(r1.baseline, true);
   assert.deepEqual(r1.findings, []);
-  assert.deepEqual(Object.keys(r1.state.sent.known).sort(), ['ua:- id@mail.gmail.com b:#', 'ua:eMClient id@example.org b:------=_M#-#-#-#-#']);
+  assert.deepEqual(Object.keys(r1.state.sent.known).sort(), ['ua:- id@gmail.com b:#', 'ua:eMClient id@example.org b:------=_M#-#-#-#-#']);
 
   const f2 = gmail({
     sent: [{ id: 'm3', headers: EM }, { id: 'm4', headers: API }],
@@ -143,7 +143,7 @@ test('fehlender Sicherheitsfilter wird jede Nacht gemeldet (Einrichtung, nicht �
 test('Meldung: Postfach, Domain, Datum, Betreff gekürzt; nichts bei keinem Befund; laut bei Filter/Gesendet', () => {
   assert.equal(formatNotification([{ mailbox: BOX, findings: [] }]), null);
   const n = formatNotification([{ mailbox: BOX, findings: [
-    { kind: 'sent', domain: 'fremd.example', date: '24.11. 04:00', subject: 'Rechnung •••• bitte zahlen', detail: 'ua:- id@mail.gmail.com b:-' },
+    { kind: 'sent', domain: 'fremd.example', date: '24.11. 04:00', subject: 'Rechnung •••• bitte zahlen', detail: 'ua:- id@gmail.com b:-' },
     { kind: 'security', domain: 'konto-x.example', date: '24.11. 03:00', subject: 'Your authentication code ••••' },
   ] }]);
   assert.equal(n.priority, '4');
@@ -239,4 +239,73 @@ test('Befehl: einziger schreibender Aufruf ist die ntfy-Meldung; keine Schreibfu
   assert.match(src, /async function notify\(url, n, fetchImpl = fetch\) \{[\s\S]*?method: 'POST'/);
   for (const w of ['createDraft', 'createCheckedDraft', 'gmailPost', 'applySecurityLabel', 'readPortalCodeMails', 'draftMail']) assert.ok(!new RegExp(`\\b${w}\\b`).test(src), w);
   for (const m of ['PUT', 'PATCH', 'DELETE']) assert.ok(!new RegExp(`['"\`]${m}['"\`]`).test(src), m);
+});
+
+// ---------- Codex-Befunde S114 (Cross-Review 24.11.) ----------
+import { CANDIDATE_QUERY } from '../src/mail-guard.js';
+import { SENDER_QUERY, SUBJECT_QUERY } from '../src/security-mail.js';
+
+test('Codex #5: keine vollen Adressen in Betreff und Abdruck; Host nur Domain', () => {
+  assert.equal(maskSubject('Code for bob@example.net 123456'), 'Code for •@example.net ••••');
+  const fp = sentFingerprint(H({ 'User-Agent': 'Mailer bob@example.net', 'Message-ID': '<x@a.b.mail.example.org>' }));
+  assert.ok(!fp.includes('bob'), fp);
+  assert.match(fp, /id@example\.org /);
+});
+
+test('Codex #6: Vorauswahl umfasst Listen-Betreffe, Listen-Absender und Spam/Papierkorb', () => {
+  assert.ok(CANDIDATE_QUERY.includes(SUBJECT_QUERY));
+  assert.ok(CANDIDATE_QUERY.includes(`from:(${SENDER_QUERY})`));
+  assert.match(CANDIDATE_QUERY, /\bin:anywhere\b/);
+});
+
+test('Codex #7: IMAP-Löschverhalten und POP-Disposition sind Teil des Stands', () => {
+  const base = { labels: [], filters: [], forwardingAddresses: [], autoForwarding: { enabled: false }, delegates: [] };
+  const a = settingsItems({ ...base, imap: { enabled: true, expungeBehavior: 'archive' }, pop: { accessWindow: 'disabled', disposition: 'leaveInInbox' } });
+  const b = settingsItems({ ...base, imap: { enabled: true, expungeBehavior: 'deleteForever' }, pop: { accessWindow: 'disabled', disposition: 'trash' } });
+  const d = diffSettings(a, b).map((x) => `${x.change} ${x.summary}`);
+  assert.ok(d.some((t) => /^neu IMAP an .*deleteForever/.test(t)) && d.some((t) => /^neu POP .*trash/.test(t)), d.join('\n'));
+});
+
+test('Codex nice: Filter-Hash unabhängig von Schlüssel- und Label-Reihenfolge; weniger Fehlalarme', () => {
+  const s = (f) => Object.keys(settingsItems({ labels: [], filters: [f], imap: {}, pop: {} })).find((k) => k.startsWith('filter:'));
+  assert.equal(s({ criteria: { from: 'a', to: 'b' }, action: { addLabelIds: ['X', 'Y'] } }), s({ action: { addLabelIds: ['Y', 'X'] }, criteria: { to: 'b', from: 'a' } }));
+  for (const t of ['Your discount code 2026', 'Re: authentication refactoring', 'PIN your favorite recipes']) assert.equal(securityCandidate({ subject: t }), null, t);
+});
+
+test('Codex #1/#2/#4: gekürzte Liste und fehlendes Sperr-Label → unvollständig, Stand rückt nicht vor, Befund bleibt', async () => {
+  const viele = Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, headers: EM }));
+  const f = gmail({ sent: viele });
+  const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: f });
+  const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, maxMessages: 3, fetchImpl: f });
+  assert.equal(r2.incomplete, true);
+  assert.equal(r2.state.lastRun, r1.state.lastRun, 'Fenster bleibt offen');
+  assert.ok(r2.findings.some((x) => x.kind === 'error' && /zu viele/.test(x.detail)));
+  // altes Zeitfenster wird nicht auf 7 Tage gekappt
+  const alt = { ...r1.state, lastRun: NOW - 9 * 86_400_000 };
+  const f2 = gmail({ sent: [] });
+  await scanMailbox({ token: 'T', mailbox: BOX, state: alt, now: NOW, fetchImpl: f2 });
+  const after = Number(/after:(\d+)/.exec(f2.log.find((c) => c.p === 'messages').q)[1]) * 1000;
+  assert.ok(after <= NOW - 9 * 86_400_000, 'ganzer Rückstand seit dem letzten Lauf');
+  // Sperr-Label fehlt: Befund statt Ausnahme, keine Mail gelesen
+  const ohne = async (url, init) => {
+    const p = decodeURIComponent(new URL(url).pathname);
+    if (p.endsWith('/labels')) return { ok: true, status: 200, json: async () => ({ labels: [{ id: 'INBOX', name: 'INBOX' }] }), text: async () => '{"labels":[{"id":"INBOX","name":"INBOX"}]}' };
+    return gmail()(url, init);
+  };
+  const r3 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, fetchImpl: ohne });
+  assert.equal(r3.incomplete, true);
+  assert.ok(r3.findings.some((x) => x.kind === 'setup' && /label/.test(x.detail)));
+});
+
+test('Codex #3/#4: Meldung sortiert Lautes nach vorn; Log bekommt alle Zeilen; unlesbares Postfach steht in der Meldung', async (t) => {
+  const many = [...Array.from({ length: 20 }, (_, i) => ({ kind: 'security', domain: `d${i}.example`, date: '1.1.', subject: 's' })), { kind: 'settings', change: 'neu', summary: 'Filter (x)' }];
+  const n = formatNotification([{ mailbox: BOX, findings: many }]);
+  assert.match(n.body.split('\n')[0], /neu Filter/);
+  assert.equal(n.lines.length, 21);
+  const dir = tmpDir('mail-guard-', t);
+  const tot = mitNtfy(async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Delegation denied' } }), text: async () => '{}' }));
+  const out = [];
+  assert.equal(await run(ARGS(dir), deps(tot, { log: (s) => out.push(s) })), 3);
+  assert.equal(tot.posts.length, 1, 'Fehler geht als Meldung raus');
+  assert.match(tot.posts[0].body, /hello@: nicht geprüft/);
 });

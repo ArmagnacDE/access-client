@@ -27,7 +27,8 @@ import { isSecurityFilter, missingSecurityParts, readMailSettings } from './gmai
 import { isSecurityMail, SENDER_QUERY, SUBJECT_QUERY } from './security-mail.js';
 
 const TAG = 86_400_000;
-const UEBERLAPPUNG_MS = 2 * 3_600_000; // je Lauf etwas zurück, doppelte Meldungen verhindert `reported`
+const STUNDE = 3_600_000;
+const UEBERLAPPUNG_MS = 2 * STUNDE; // je Lauf etwas zurück, doppelte Meldungen verhindert `reported`
 const REPORTED_MAX = 5000;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -37,10 +38,16 @@ const kanonisch = (v) => (Array.isArray(v) ? (v.every((x) => typeof x === 'strin
 const stabil = (v) => JSON.stringify(kanonisch(v));
 const hdr = (headers, name) => (headers ?? []).find((h) => String(h?.name).toLowerCase() === name.toLowerCase())?.value ?? '';
 
-/** Betreff für Meldungen: eine Zeile, Ziffernfolgen ab 4 maskiert (Codes stehen oft im Betreff), höchstens 32 Zeichen. */
+/**
+ * Betreff für Meldungen: eine Zeile, höchstens 32 Zeichen. Adressen auf die Domain gekürzt (auch "lokal"@domain), Codes
+ * maskiert: Ziffernfolgen ab 3 (auch „123 456“, „123-456“) und gemischte Folgen aus Buchstaben und Ziffern ab 3 („A7K“),
+ * außer „2FA“/„MFA“ (Codex S114 #5, reviewer S114 nice 3).
+ */
 export function maskSubject(s, max = 32) {
-  // Adressen zuerst auf die Domain kürzen (Codex S114 #5), dann Ziffern maskieren
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim().replace(/[^\s<>"@]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, (_, d) => `•@${d}`).replace(/\d{4,}/g, '••••');
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim()
+    .replace(/(?:"[^"]*"|[^\s<>"@]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, (_, d) => `•@${d}`)
+    .replace(/\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{3,}\b/g, (w) => (/^[0-9]?[a-z]fa$/i.test(w) ? w : '•••'))
+    .replace(/\d{3,}(?:[ -]\d{3,})*/g, '••••');
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
@@ -66,7 +73,8 @@ export function sentFingerprint(headers) {
   const roh = (/@([^>\s]+)>?\s*$/.exec(hdr(headers, 'Message-ID'))?.[1] ?? '').toLowerCase().replace(/[^a-z0-9.-]/g, '');
   const host = roh ? roh.split('.').filter(Boolean).slice(-2).join('.').replace(/[0-9a-f]{8,}/g, '#').replace(/\d+/g, '#') : '-';
   const grenze = /boundary="?([^";]+)"?/i.exec(hdr(headers, 'Content-Type'))?.[1];
-  const form = grenze ? grenze.replace(/[0-9A-Fa-f]+/g, '#').replace(/[^A-Za-z#=_.+-]/g, '').slice(0, 24) : '-';
+  // Zufallsteile: alphanumerische Folgen ab 6 (Base62, reviewer S114 nice 4) und Hex-Folgen als #
+  const form = grenze ? grenze.replace(/[A-Za-z0-9]{6,}/g, '#').replace(/[0-9A-Fa-f]+/g, '#').replace(/#+/g, '#').replace(/[^A-Za-z#=_.+-]/g, '').slice(0, 24) : '-';
   return `ua:${ua} id@${host} b:${form}`;
 }
 
@@ -74,12 +82,12 @@ export function sentFingerprint(headers) {
 // sperren. Wortgrenzen nur an ASCII-Stellen (\b kennt keine Umlaute).
 const KANDIDATEN = Object.freeze([
   { name: 'code-wort', re: /(zugangs|bestätigungs|sicherheits|verifizierungs|anmelde|einmal|login|access|security|verification|authentication|auth|confirmation|sign-?in|zugriffs)[- ]?code/iu },
-  // Jahreszahlen zählen nicht als Code („discount code 2026“)
-  { name: 'code-ziffern', re: /(^|\D)(?!(19|20)\d\d(\D|$))\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)(?!(19|20)\d\d(\D|$))\d{4,8}(\D|$)|(^|\D)\d{4,8}\s+(ist|is)\s/iu },
+  // Rabatt- und Gutscheincodes zählen nicht (statt Jahreszahlen auszunehmen: „Your code: 2026“ ist ein Code, Codex-Folgerunde)
+  { name: 'code-ziffern', re: /(^|\D)\d{4,8}(\D|$).*(?<![-/\w])code\b|(?<![-/\w])code\b.*(^|\D)\d{4,8}(\D|$)/iu, ausser: /(discount|rabatt|gutschein|promo|coupon|voucher|angebot|sale)/iu },
   { name: 'kurzwort', re: /\b(otp|tan|pin|passcode|2fa|mfa)\b.*(login|log in|anmeld|sign|konto|account|code|zugang|access|karte|card|\d{4,})|(login|log in|anmeld|sign|konto|account|zugang|access|karte|card).*\b(otp|tan|pin|passcode|2fa|mfa)\b|\b(otp|passcode|2fa|mfa)\b/iu },
   { name: 'zwei-faktor', re: /(two[- ]factor|zwei[- ]faktor|2-step|two-step|zweistufig|multi-factor|(authentication|authentifizierungs?)[- ](code|method|methode|app|verfahren))/iu },
   { name: 'passwort', re: /(passwor[dt]|kennwort)\b.*(reset|zurücksetzen|ändern|change|vergessen|forgot|neu)|(reset|forgot|vergessen|neues)\s+(your\s+|dein\s+|ihr\s+)?(passwor|kennwort)/iu },
-  { name: 'bestaetigen', re: /\b(confirm|verify|bestätige|bestätigen|verifiziere|verifizieren)\b.*(e-?mail|adresse|address|konto|account|anmeldung|login|sign[- ]?in|identit)/iu },
+  { name: 'bestaetigen', re: /\b(confirm|verify|bestätige|bestätigen|verifiziere|verifizieren)\b.*(e-?mail|konto|account|anmeldung|login|sign[- ]?in|identit)/iu },
   { name: 'neue-anmeldung', re: /\b(neue[rs]?|new)\s+(anmeldung|sign[- ]?in|login|gerät|device)/iu },
   { name: 'sicherheitswarnung', re: /(security alert|sicherheitswarnung|sicherheitshinweis|unusual (sign|activity|login)|ungewöhnliche)/iu },
   { name: 'anmelde-link', re: /(sign[- ]?in|log[- ]?in|anmelde|magic)[- ]?link/iu },
@@ -88,7 +96,7 @@ const KANDIDATEN = Object.freeze([
 /** Sieht die Mail wie 2FA/Code/Passwort-Link aus? → { pattern } oder null. Nur Betreff (From wird nicht gewertet). */
 export function securityCandidate({ subject }) {
   const s = String(subject ?? '');
-  const k = KANDIDATEN.find((x) => x.re.test(s));
+  const k = KANDIDATEN.find((x) => x.re.test(s) && !x.ausser?.test(s));
   return k ? { pattern: k.name } : null;
 }
 
@@ -99,9 +107,11 @@ const SUCHWOERTER = ['code', 'codes', 'verification', 'verify', 'verifizieren', 
   'tan', 'passcode', 'authentication', 'authentifizierung', '2fa', 'mfa', '"two-factor"', '"security alert"', 'sicherheitswarnung',
   'sicherheitshinweis', 'zugangscode', 'sicherheitscode', 'bestätigungscode', 'verifizierungscode', 'einmalcode', 'anmeldecode',
   'zugriffscode', '"neues gerät"', '"new device"', 'unusual', 'link'];
-// Vereinigung mit den Merkmalen der Liste (Betreffe UND Absender) und Spam/Papierkorb (Codex S114 #6): sonst fände der
-// Wächter Listen-Treffer ohne Label nicht, deren Betreff kein Suchwort enthält.
-export const CANDIDATE_QUERY = `(subject:(${SUCHWOERTER.join(' OR ')}) OR ${SUBJECT_QUERY} OR from:(${SENDER_QUERY})) in:anywhere -in:sent -in:drafts -in:chats`;
+// Vereinigung mit den Merkmalen der Liste (Betreffe UND Absender, Codex S114 #6): sonst fände der Wächter Listen-Treffer
+// ohne Label nicht, deren Betreff kein Suchwort enthält. BEWUSST NICHT: Spam und Papierkorb (Codex #6 schlug in:anywhere
+// vor). Gmail-Filter wirken dort nicht, Phishing mit Sicherheits-Betreffen läge jede Nacht als „Filter griff nicht“ in der
+// Meldung (reviewer S114 B1); Agenten sehen Spam nur mit ausdrücklichem in:spam, dort greift die Merkmal-Sperre.
+export const CANDIDATE_QUERY = `(subject:(${SUCHWOERTER.join(' OR ')}) OR ${SUBJECT_QUERY} OR from:(${SENDER_QUERY})) -in:sent -in:drafts -in:chats`;
 
 const ACTION_LABEL = { TRASH: 'löschen', SPAM: 'als Spam', IMPORTANT: 'wichtig', STARRED: 'Stern' };
 function filterSummary(f, labelNames) {
@@ -155,6 +165,34 @@ export function diffSettings(alt, neu) {
   return out;
 }
 
+const sek = (ms) => Math.floor(ms / 1000);
+/**
+ * Alle IDs einer Suche im Zeitraum [from, to), in Zeitscheiben (ein Tag, bei voller Scheibe halbiert bis eine Stunde),
+ * damit ein Rückstand aufholt statt immer dieselben neuesten maxMessages zu holen (reviewer S114 B2, Codex #1).
+ * truncated: eine Stundenscheibe war voller als max; deren Rest bleibt ungeprüft und wird als Befund gemeldet.
+ */
+async function listWindow({ token, mailbox, q, from, to, max, fetchImpl }) {
+  const ids = new Map();
+  let truncated = false;
+  for (let start = from; start < to;) {
+    let len = Math.min(TAG, to - start);
+    for (;;) {
+      // eine Sekunde Überlappung an der Scheibengrenze (Gmail-Grenzen sekundengenau), doppelte IDs fallen in der Map weg
+      const r = await listMessageIds({ token, mailbox, q: `${q} after:${sek(start) - 1} before:${sek(start + len)}`, max, fetchImpl });
+      if (!r.truncated || len <= STUNDE) {
+        for (const x of r.ids) ids.set(x.id, x);
+        if (r.truncated) truncated = true;
+        break;
+      }
+      len = Math.max(STUNDE, Math.floor(len / 2));
+    }
+    start += len;
+  }
+  return { ids: [...ids.values()], truncated };
+}
+const SPAM_TRASH = new Set(['SPAM', 'TRASH']);
+const adressDomains = (v) => [...String(v ?? '').matchAll(/[^\s<>",;]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((m) => domainOf(m[0]));
+
 const datum = (ms) => (Number.isFinite(ms) ? new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(ms)).replace(',', '') : '?');
 const SENT_HEADERS = Object.freeze(['Message-ID', 'User-Agent', 'X-Mailer', 'Content-Type', 'To', 'Subject']);
 const MAIL_HEADERS = Object.freeze(['From', 'Subject']);
@@ -185,20 +223,25 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
   const snap = await readMailSettings({ token, mailbox, fetchImpl });
   const { missing } = missingSecurityParts({ labels: snap.labels, filters: snap.filters, label, mailbox });
   if (missing.length) findings.push({ kind: 'setup', detail: `fehlt ${missing.map((m) => m.name).join(', ')}` });
+  const items = settingsItems(snap, { label });
+  // Einstellungs-Diff vor der Label-Prüfung: ein gelöschtes Sperr-Label tarnt keinen neuen Weiterleitungsfilter
+  // (reviewer S114 nice 1); er braucht keinen Mailabruf
+  if (!baseline) for (const d of diffSettings(state.settings, items)) findings.push({ kind: 'settings', change: d.change, summary: d.summary, ...(d.domain ? { domain: d.domain } : {}) });
   // Ohne Sperr-Label liest kein Inhaltspfad (requireLabel): Befund melden, Stand nicht anfassen (Codex S114 #4)
   if (missing.some((m) => m.name === 'label')) {
     return { mailbox, baseline, findings, incomplete: true, truncated: false, counts: { filters: snap.filters.length, findings: findings.length }, state: state ?? null };
   }
-  const items = settingsItems(snap, { label });
-  if (!baseline) for (const d of diffSettings(state.settings, items)) findings.push({ kind: 'settings', change: d.change, summary: d.summary, ...(d.domain ? { domain: d.domain } : {}) });
 
-  const seit = (ms) => `after:${Math.floor(ms / 1000)}`;
   // Ganzer Rückstand seit dem letzten gespeicherten Lauf, nicht gekappt (Codex S114 #2): ein Meldungsausfall verliert nichts
-  const fenster = baseline ? null : Number(state.lastRun) - UEBERLAPPUNG_MS;
+  const von = baseline ? now - days * TAG : Number(state.lastRun) - UEBERLAPPUNG_MS;
+  let spam = 0;
 
-  // 2. Gesendete
+  // 2. Gesendete. Grundstand: die neuesten maxMessages der letzten learnDays Tage lernen. BEWUSST NICHT UMGESETZT:
+  // ein gekürzter Grundstand lernt nur die neuesten; Folge sind höchstens Fehlalarme, kein Verlust.
   const known = baseline ? {} : { ...(state.sent?.known ?? {}) };
-  const gesendet = await listMessageIds({ token, mailbox, q: `in:sent ${seit(baseline ? now - learnDays * TAG : fenster)}`, max: maxMessages, fetchImpl });
+  const gesendet = baseline
+    ? await listMessageIds({ token, mailbox, q: `in:sent after:${sek(now - learnDays * TAG)}`, max: maxMessages, fetchImpl })
+    : await listWindow({ token, mailbox, q: 'in:sent', from: von, to: now, max: maxMessages, fetchImpl });
   let sentChecked = 0;
   for (const { id } of gesendet.ids) {
     if (!baseline && reported.has(id)) continue;
@@ -206,20 +249,21 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
     if (!m) continue;
     sentChecked++;
     const fp = sentFingerprint(m.headers);
-    if (baseline) { known[fp] = { count: (known[fp]?.count ?? 0) + 1, last: m.at }; continue; }
-    if (known[fp]) { known[fp] = { count: known[fp].count + 1, last: Math.max(known[fp].last ?? 0, m.at) }; reported.add(id); continue; }
+    if (baseline) { known[fp] = { count: (known[fp]?.count ?? 0) + 1, last: Math.max(known[fp]?.last ?? 0, m.at) }; continue; }
     reported.add(id);
-    const to = hdr(m.headers, 'To').split(',').filter(Boolean);
-    findings.push({ kind: 'sent', id, date: datum(m.at), domain: `${domainOf(to[0])}${to.length > 1 ? ` +${to.length - 1}` : ''}`, subject: maskSubject(hdr(m.headers, 'Subject')), detail: fp });
+    if (known[fp]) { known[fp] = { ...known[fp], count: (known[fp].count ?? 0) + 1, last: Math.max(known[fp].last ?? 0, m.at) }; continue; }
+    const to = adressDomains(hdr(m.headers, 'To'));
+    findings.push({ kind: 'sent', id, date: datum(m.at), domain: `${to[0] ?? '?'}${to.length > 1 ? ` +${to.length - 1}` : ''}`, subject: maskSubject(hdr(m.headers, 'Subject')), detail: fp });
   }
 
   // 3. Sicherheitsmails ohne Sperr-Label (gmailGet schließt das Label in der Suche aus)
-  const kandidaten = await listMessageIds({ token, mailbox, q: `${CANDIDATE_QUERY} ${seit(baseline ? now - days * TAG : fenster)}`, max: maxMessages, fetchImpl });
+  const kandidaten = await listWindow({ token, mailbox, q: CANDIDATE_QUERY, from: von, to: now, max: maxMessages, fetchImpl });
   let securityChecked = 0;
   for (const { id } of kandidaten.ids) {
     if (reported.has(id)) continue;
     const m = await kopf({ token, mailbox, id, headers: MAIL_HEADERS, fetchImpl });
     if (!m) continue;
+    if (m.labelIds.some((l) => SPAM_TRASH.has(l))) { spam++; continue; }
     securityChecked++;
     const s = { from: hdr(m.headers, 'From'), subject: hdr(m.headers, 'Subject') };
     const liste = isSecurityMail(s);
@@ -229,20 +273,21 @@ export async function scanMailbox({ token, mailbox, state, now = Date.now(), day
     findings.push({ kind: liste ? 'security-list' : 'security', id, date: datum(m.at), domain: domainOf(s.from), subject: maskSubject(s.subject), ...(k ? { detail: k.pattern } : {}) });
   }
 
-  // Gekürzte Liste (Codex S114 #1): Befund, und das Zeitfenster bleibt offen (lastRun alt), damit nichts dauerhaft
-  // übersprungen wird; was schon geprüft ist, steht in reported. BEWUSST NICHT UMGESETZT: ein gekürzter Grundstand
-  // (mehr als maxMessages Gesendete in learnDays) lernt nur die neuesten; Folge sind höchstens Fehlalarme, kein Verlust.
-  const truncated = gesendet.truncated || kandidaten.truncated;
-  if (truncated) findings.push({ kind: 'error', detail: `zu viele Treffer (über ${maxMessages}), Prüffenster bleibt offen` });
-  const lastRun = truncated && !baseline ? Number(state.lastRun) : now;
+  // Volle Stundenscheibe: deren Rest bleibt ungeprüft. BEWUSST: laut melden und weiter vorrücken statt jede Nacht an
+  // derselben Stelle zu hängen (mehr als maxMessages Treffer in einer Stunde heißt Mail-Bombing, das gehört sofort
+  // angesehen). Ein gekürzter Grundstand bei den Gesendeten ist kein Befund (s. o.).
+  const truncated = (!baseline && gesendet.truncated) || kandidaten.truncated;
+  if (truncated) findings.push({ kind: 'error', detail: `zu viele Treffer (über ${maxMessages} in einer Stunde), Rest dieser Stunde nicht geprüft` });
   return {
-    mailbox, baseline, findings, truncated, incomplete: truncated && !baseline,
-    counts: { filters: snap.filters.length, settings: Object.keys(items).length, sentChecked, fingerprints: Object.keys(known).length, securityChecked, findings: findings.length },
-    state: { version: 1, mailbox, lastRun, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
+    mailbox, baseline, findings, truncated, incomplete: truncated,
+    counts: { filters: snap.filters.length, settings: Object.keys(items).length, sentChecked, fingerprints: Object.keys(known).length, securityChecked, spam, findings: findings.length, ...(baseline && gesendet.truncated ? { lernenGekuerzt: true } : {}) },
+    state: { version: 1, mailbox, lastRun: now, settings: items, sent: { known }, reported: [...reported].slice(-REPORTED_MAX) },
   };
 }
 
 const LAUT = new Set(['sent', 'settings', 'setup', 'security-list', 'error']);
+// Rangfolge in der Meldung (reviewer S114 B3): Einstellungen, Einrichtung und Ausfälle zuerst und nie gekürzt
+const RANG = { settings: 0, setup: 0, error: 0, sent: 1, 'security-list': 2, security: 3 };
 const kurz = (mb) => `${String(mb).split('@')[0]}@`;
 function zeile(mb, f) {
   switch (f.kind) {
@@ -261,9 +306,12 @@ function zeile(mb, f) {
 export function formatNotification(results, { maxLines = 15 } = {}) {
   const alle = results.flatMap((r) => r.findings.map((f) => ({ mb: r.mailbox, f })));
   if (!alle.length) return null;
-  alle.sort((a, b) => Number(LAUT.has(b.f.kind)) - Number(LAUT.has(a.f.kind)));
+  alle.sort((a, b) => (RANG[a.f.kind] ?? 9) - (RANG[b.f.kind] ?? 9));
   const zeilen = alle.map(({ mb, f }) => zeile(mb, f));
-  const body = zeilen.slice(0, maxLines).join('\n') + (zeilen.length > maxLines ? `\n+${zeilen.length - maxLines} weitere (Log des Jobs)` : '');
+  const fest = alle.filter(({ f }) => RANG[f.kind] === 0).length;
+  const rest = Math.max(0, maxLines - fest);
+  const weg = zeilen.length - fest - Math.min(rest, zeilen.length - fest);
+  const body = zeilen.slice(0, fest + Math.min(rest, zeilen.length - fest)).join('\n') + (weg > 0 ? `\n+${weg} weitere (Log des Jobs)` : '');
   return { title: `Mail-Wächter: ${alle.length} Befund${alle.length === 1 ? '' : 'e'}`, body, lines: zeilen, priority: alle.some(({ f }) => LAUT.has(f.kind)) ? '4' : '3' };
 }
 

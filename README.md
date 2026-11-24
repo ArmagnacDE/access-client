@@ -222,9 +222,12 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
    Unbekannte Abdrücke werden nie gelernt, jede solche Mail meldet; ein neuer eigener Client: `mail-guard accept`.
 3. **2FA, Codes, Passwort-Links ohne Sperr-Label:** `security-list` = Merkmal der Liste trifft, Filter griff nicht;
    `security` = Kandidat (unbekannter Absender). Gelesen werden nur From und Subject (`format=metadata`), nie der Text.
+   Spam und Papierkorb nicht (dort wirken Filter nicht; Phishing mit Sicherheits-Betreff wäre jede Nacht ein Fehlalarm).
 
 - **Erster Lauf** je Postfach legt den Grundstand an (Einstellungen, Abdrücke der Gesendeten der letzten 60 Tage), meldet
-  nur Fehlendes beim Sperr-Label und 2FA-Mails der letzten 2 Tage. Danach je Lauf das Fenster seit dem letzten Lauf.
+  nur Fehlendes beim Sperr-Label und 2FA-Mails der letzten 2 Tage, und listet im Log, was er übernimmt (`gelernt …`, ⚠ bei
+  Weiterleitungen, Delegierungen und einteiligen Mails ohne Client). Daran wird die Probe geprüft. Danach je Lauf das
+  Fenster seit dem letzten Lauf, in Zeitscheiben (Tag, bei mehr als 1000 Treffern bis zur Stunde halbiert).
 - **Meldung** (ntfy, URL aus `--ntfy-env`, Standard `MAIL_GUARD_NTFY_URL`): Postfach, Domain, Datum, Betreff gekürzt
   (32 Zeichen, Ziffernfolgen ab 4 maskiert), höchstens 15 Zeilen; Priorität 4 bei Einstellungen, Gesendeten und
   Filterlücken, 3 bei reinen 2FA-Kandidaten. Ohne Befund keine Meldung.
@@ -233,9 +236,13 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - **Merkmal-Liste ergänzen:** `propose --days 90` zeigt Kandidaten je Domain (Muster, maskierte Betreffe), schreibt
   nichts. Die Liste wird per PR in `src/security-mail.js` erweitert, danach `scripts/security-label.mjs --apply` (nach
   Freigabe); der Wächter ergänzt keine Filter.
-- **Nichts geht still verloren:** Das Prüffenster reicht immer bis zum letzten gespeicherten Lauf zurück (nicht gekappt);
-  mehr als 1000 Treffer, ein fehlendes Sperr-Label oder ein nicht lesbares Postfach stehen als Befund in der Meldung, und
-  das Fenster bleibt offen. Die Meldung zeigt Lautes zuerst, das Log alle Zeilen.
+- **Nichts geht still verloren:** Das Prüffenster reicht immer bis zum letzten gespeicherten Lauf zurück (nicht gekappt).
+  Ein fehlendes Sperr-Label oder ein nicht lesbares Postfach steht als Befund in der Meldung, der Stand dieses Postfachs
+  bleibt. Mehr als 1000 Treffer in einer Stunde (Mail-Bombing) meldet er laut; der Rest dieser Stunde bleibt ungeprüft.
+  Reihenfolge der Meldung: Einstellungen, Einrichtung, Ausfälle (nie gekürzt), dann Gesendete, Filterlücken, Kandidaten;
+  das Log bekommt alle Zeilen.
+- **Grenzen:** nachgebaute Client-Merkmale; eine gesendete Mail, die selbst das Sperr-Label trägt (Kopie an sich selbst
+  mit Sicherheits-Betreff); Abwesenheitsnotiz und Absender-Einstellungen (`sendAs`, Reply-To) überwacht er nicht.
 - Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht (vollständig) geprüft.
 
 ## Änderungen gegenüber der Herkunft

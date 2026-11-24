@@ -41,11 +41,20 @@ const zahl = (v, def, max) => {
 };
 const stateFile = (dir, mb) => join(dir, `mail-guard-${mb.replace(/[^a-z0-9@._-]/g, '_')}.json`);
 function readState(dir, mb, readFile) {
-  try { return JSON.parse(readFile(stateFile(dir, mb), 'utf8')); } catch (e) {
+  let st;
+  try { st = JSON.parse(readFile(stateFile(dir, mb), 'utf8')); } catch (e) {
     if (e?.code === 'ENOENT') return null;
     throw new Error(`Zustand ${mb} nicht lesbar (${e?.code ?? e?.name}); nichts geprüft, Datei prüfen`);
   }
+  // Form prüfen (reviewer S114 nice 9): ohne lastRun hieße die Suche after:NaN
+  const obj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+  if (st?.version !== 1 || !Number.isFinite(st.lastRun) || !obj(st.settings) || !obj(st.sent?.known) || !Array.isArray(st.reported)) {
+    throw new Error(`Zustand ${mb} ungültig (Version/lastRun/settings/sent/reported); nichts geprüft, Datei prüfen`);
+  }
+  return st;
 }
+/** Form eines Abdrucks wie sentFingerprint ihn baut (accept prüft, reviewer S114 nice 10). */
+const FINGERPRINT = /^ua:[A-Za-z0-9._-]+(?: [A-Za-z0-9._-]+)* id@[a-z0-9.#-]+ b:[^\s]+$/;
 function writeState(dir, mb, state, fs) {
   fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const f = stateFile(dir, mb);
@@ -103,7 +112,9 @@ export async function run(argv, deps = {}) {
   if (cmd === 'accept') {
     const mb = opt.mailbox?.[0];
     if (!mb || opt.mailbox.length !== 1 || !MAILBOX.test(mb) || !opt.fingerprint) { err(`accept braucht genau ein --mailbox und --fingerprint\n${USAGE}`); return 1; }
-    const st = readState(stateDir, mb, readFile);
+    if (!FINGERPRINT.test(opt.fingerprint)) { err(`Abdruck „${opt.fingerprint.slice(0, 80)}“ hat nicht die Form „ua:<client> id@<host> b:<grenze>“ (aus der Meldung zwischen […] kopieren, in einfachen Anführungszeichen)`); return 1; }
+    let st;
+    try { st = readState(stateDir, mb, readFile); } catch (e) { err(e.message); return 1; }
     if (!st) { err(`kein Zustand für ${mb}; erst check laufen lassen`); return 1; }
     st.sent.known[opt.fingerprint] = { ...(st.sent.known[opt.fingerprint] ?? { count: 0 }), accepted: now };
     writeState(stateDir, mb, st, fs);
@@ -132,6 +143,16 @@ export async function run(argv, deps = {}) {
       results.push(r);
       if (r.incomplete) unlesbar++;
       log(`${mb}: ${r.baseline && cmd === 'check' ? 'Grundstand angelegt · ' : ''}${Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(' · ')}${r.truncated ? ' · gekürzt (zu viele Treffer)' : ''}`);
+      // Was der Grundstand ungemeldet übernimmt, sichtbar machen (reviewer S114 B5): Sascha prüft daran die Probe.
+      // Datensparsam wie die Meldung (Abdrücke, Kurztexte mit Domain); ⚠ = genau hinsehen.
+      if (r.baseline && cmd === 'check' && r.state) {
+        for (const [fp, v] of Object.entries(r.state.sent.known).sort((a, b) => b[1].count - a[1].count)) {
+          log(`${mb}: gelernt Abdruck ${v.count}× ${fp}${/^ua:- .* b:-$/.test(fp) ? ' ⚠ einteilig ohne Client, so sieht auch Skript-Versand aus' : ''}`);
+        }
+        for (const v of Object.values(r.state.settings)) {
+          log(`${mb}: gelernt ${v.summary}${/Weiterleitung an|Weiterleitungsadresse|Delegierung an/.test(v.summary) ? ' ⚠' : ''}`);
+        }
+      }
     } catch (e) {
       unlesbar++;
       const grund = redact(String(e?.message)).slice(0, 300);
@@ -150,10 +171,15 @@ export async function run(argv, deps = {}) {
   const n = formatNotification(results);
   if (n) log(`${n.title}\n${n.lines.join('\n')}`);
   else log('Mail-Wächter: keine Befunde');
-  if (opt['dry-run']) { log('Dry-Run: nichts gespeichert, nichts gemeldet'); return unlesbar ? 3 : 0; }
+  const varName = opt['ntfy-env'] ?? 'MAIL_GUARD_NTFY_URL';
+  const url = env[varName];
+  if (opt['dry-run']) {
+    // sonst fiele ein leeres ntfy-Ziel erst im echten Lauf auf (Exit 1, und der Runner meldet über dasselbe Ziel)
+    if (!url) err(`WARNUNG: ${varName} nicht gesetzt; der echte Lauf könnte Befunde nicht melden`);
+    log('Dry-Run: nichts gespeichert, nichts gemeldet');
+    return unlesbar ? 3 : 0;
+  }
   if (n) {
-    const varName = opt['ntfy-env'] ?? 'MAIL_GUARD_NTFY_URL';
-    const url = env[varName];
     if (!url) { err(`mail-guard: ${varName} nicht gesetzt; Befunde nicht gemeldet, Zustand nicht gespeichert`); return 1; }
     try { await notify(url, n, fetchImpl); } catch (e) { err(`mail-guard: ${e.message}; Zustand nicht gespeichert (nächster Lauf meldet erneut)`); return 1; }
   }

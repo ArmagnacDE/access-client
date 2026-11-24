@@ -27,6 +27,8 @@ export const SECURITY_FILTERS = Object.freeze([
 
 const PFADE = new Set(['labels', 'settings/filters']);
 // Nur lesend für den Mail-Wächter (S114): Weiterleitungen, Delegierungen, IMAP/POP; nie schreibend erreichbar.
+// Nur Listen kommen leer, wenn sie leer sind (reviewer S114 nice 8); imap/pop/autoForwarding leer wäre ein Fehler.
+const LISTEN = new Set(['settings/filters', 'settings/forwardingAddresses', 'settings/delegates']);
 const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates']);
 const MAILBOX = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
@@ -47,7 +49,7 @@ async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
   const roh = typeof res.text === 'function' ? await res.text().catch(() => null) : JSON.stringify(await res.json().catch(() => null));
   let j = null;
   // Leere Listen (Filter, Weiterleitungen, Delegierungen) kommen ebenso leer: auch „keine“.
-  if (res.ok && method === 'GET' && path.startsWith('settings/') && roh != null && roh.trim() === '') j = {};
+  if (res.ok && method === 'GET' && LISTEN.has(path) && roh != null && roh.trim() === '') j = {};
   else { try { j = JSON.parse(roh); } catch { j = null; } }
   if (!res.ok) throw new Error(`Gmail-Einrichtung ${method} ${path} in ${mailbox}: API ${res.status} ${String(j?.error?.message ?? '').slice(0, 160)}`);
   if (!j || typeof j !== 'object') throw new Error(`Gmail-Einrichtung ${method} ${path}: Antwort unvollständig`);

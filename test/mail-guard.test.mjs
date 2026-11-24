@@ -22,7 +22,7 @@ const WEB = H({ 'Message-ID': '<CAMx7f=abc123@mail.gmail.com>', 'Content-Type': 
 const API = H({ 'Message-ID': '<CAMy8g=def456@mail.gmail.com>', 'Content-Type': 'text/html; charset="UTF-8"', To: 'opfer@fremd.example', Subject: 'Rechnung 4711 bitte zahlen', Date: 'Tue, 24 Nov 2026 03:00:00 +0100' });
 
 test('Fingerabdruck: Client ohne Version, Message-ID-Host, Form der MIME-Grenze', () => {
-  assert.equal(sentFingerprint(EM), 'ua:eMClient id@example.org b:------=_M#-#-#-#-#');
+  assert.equal(sentFingerprint(EM), 'ua:eMClient id@example.org b:------=_#-#-#-#-#');
   assert.equal(sentFingerprint(WEB), 'ua:- id@gmail.com b:#');
   assert.equal(sentFingerprint(API), 'ua:- id@gmail.com b:-');
   assert.notEqual(sentFingerprint(API), sentFingerprint(WEB), 'einteilige Mail ohne Client-Kopf ist nicht Gmail im Browser');
@@ -90,7 +90,12 @@ function gmail({ sent = [], inbox = [], filters = null, forwarding = [] } = {}) 
       const q = u.searchParams.get('q');
       assert.match(q, /-label:security-no-read/, 'jede Suche schließt das Sperr-Label aus');
       const pool = /(^|[\s(])in:sent/.test(q) ? sent : inbox;
-      return ok({ messages: pool.map((m) => ({ id: m.id, threadId: m.id })) });
+      const after = Number(/after:(\d+)/.exec(q)?.[1] ?? 0) * 1000;
+      const before = Number(/before:(\d+)/.exec(q)?.[1] ?? Infinity) * 1000;
+      const at = (m) => m.at ?? Date.parse('2026-11-24T02:00:00Z');
+      const hits = pool.filter((m) => at(m) >= after && at(m) < before);
+      const max = Number(u.searchParams.get('maxResults') ?? 100);
+      return ok({ messages: hits.slice(0, max).map((m) => ({ id: m.id, threadId: m.id })), ...(hits.length > max ? { nextPageToken: 'weiter' } : {}) });
     }
     const m = /^messages\/([^/]+)$/.exec(p);
     if (m && msgs.has(m[1])) { const x = msgs.get(m[1]); return ok({ id: x.id, labelIds: x.labelIds ?? ['SENT'], internalDate: String(x.at ?? Date.parse('2026-11-24T02:00:00Z')), snippet: 'GEHEIM 991122', payload: { headers: x.headers } }); }
@@ -106,7 +111,7 @@ test('erster Lauf legt den Grundstand an und meldet nichts; zweiter Lauf meldet 
   const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: f1 });
   assert.equal(r1.baseline, true);
   assert.deepEqual(r1.findings, []);
-  assert.deepEqual(Object.keys(r1.state.sent.known).sort(), ['ua:- id@gmail.com b:#', 'ua:eMClient id@example.org b:------=_M#-#-#-#-#']);
+  assert.deepEqual(Object.keys(r1.state.sent.known).sort(), ['ua:- id@gmail.com b:#', 'ua:eMClient id@example.org b:------=_#-#-#-#-#']);
 
   const f2 = gmail({
     sent: [{ id: 'm3', headers: EM }, { id: 'm4', headers: API }],
@@ -188,7 +193,7 @@ test('check: Grundstand ohne Meldung, Zustand 600; dann Befund → genau eine nt
   const datei = join(dir, readdirSync(dir)[0]);
   assert.equal(statSync(datei).mode & 0o777, 0o600);
 
-  const f2 = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }));
+  const f2 = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }));
   assert.equal(await run(ARGS(dir), deps(f2, { now: NOW + 86_400_000 })), 0);
   assert.equal(f2.posts.length, 1);
   const u = new URL(f2.posts[0].url);
@@ -198,7 +203,7 @@ test('check: Grundstand ohne Meldung, Zustand 600; dann Befund → genau eine nt
   assert.ok(!f2.posts[0].body.includes('GEHEIM') && !f2.posts[0].body.includes('opfer@'));
   assert.ok(f2.gm.log.every((c) => c.method === 'GET'), 'Gmail nur lesend');
   // gespeichert: derselbe Lauf noch einmal meldet nichts
-  const f3 = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }));
+  const f3 = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }));
   assert.equal(await run(ARGS(dir), deps(f3, { now: NOW + 86_460_000 })), 0);
   assert.equal(f3.posts.length, 0);
 });
@@ -207,13 +212,13 @@ test('check: Meldung scheitert → Exit 1, Zustand bleibt (nächster Lauf meldet
   const dir = tmpDir('mail-guard-', t);
   await run(ARGS(dir), deps(mitNtfy(gmail({ sent: [{ id: 'm1', headers: EM }] }))));
   const vorher = readFileSync(join(dir, readdirSync(dir)[0]), 'utf8');
-  const kaputt = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }), { ntfyStatus: 500 });
+  const kaputt = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }), { ntfyStatus: 500 });
   assert.equal(await run(ARGS(dir), deps(kaputt, { now: NOW + 86_400_000 })), 1);
   assert.equal(readFileSync(join(dir, readdirSync(dir)[0]), 'utf8'), vorher);
-  const ohneUrl = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }));
+  const ohneUrl = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }));
   assert.equal(await run(ARGS(dir), deps(ohneUrl, { now: NOW + 86_400_000, env: {} })), 1, 'ohne ntfy-Ziel nicht still weiter');
   assert.equal(readFileSync(join(dir, readdirSync(dir)[0]), 'utf8'), vorher);
-  const dry = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }));
+  const dry = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }));
   const out = [];
   assert.equal(await run(ARGS(dir, '--dry-run'), deps(dry, { now: NOW + 86_400_000, log: (s) => out.push(s) })), 0);
   assert.equal(dry.posts.length, 0);
@@ -228,7 +233,7 @@ test('check: nicht lesbares Postfach → Exit 3, kein Zustand dafür; accept nim
   assert.equal(existsSync(dir) ? readdirSync(dir).length : 0, 0);
   await run(ARGS(dir), deps(mitNtfy(gmail({ sent: [{ id: 'm1', headers: EM }] }))));
   assert.equal(await run(['accept', '--mailbox', BOX, '--fingerprint', sentFingerprint(API), '--state-dir', dir], deps(null)), 0);
-  const f = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API }] }));
+  const f = mitNtfy(gmail({ sent: [{ id: 'm4', headers: API, at: NOW + 3_600_000 }] }));
   assert.equal(await run(ARGS(dir), deps(f, { now: NOW + 86_400_000 })), 0);
   assert.equal(f.posts.length, 0, 'angenommener Abdruck meldet nicht mehr');
 });
@@ -252,10 +257,10 @@ test('Codex #5: keine vollen Adressen in Betreff und Abdruck; Host nur Domain', 
   assert.match(fp, /id@example\.org /);
 });
 
-test('Codex #6: Vorauswahl umfasst Listen-Betreffe, Listen-Absender und Spam/Papierkorb', () => {
+test('Codex #6 / reviewer B1: Vorauswahl umfasst Listen-Betreffe und Listen-Absender; Spam und Papierkorb nicht', () => {
   assert.ok(CANDIDATE_QUERY.includes(SUBJECT_QUERY));
   assert.ok(CANDIDATE_QUERY.includes(`from:(${SENDER_QUERY})`));
-  assert.match(CANDIDATE_QUERY, /\bin:anywhere\b/);
+  assert.ok(!/in:anywhere/.test(CANDIDATE_QUERY));
 });
 
 test('Codex #7: IMAP-Löschverhalten und POP-Disposition sind Teil des Stands', () => {
@@ -276,9 +281,9 @@ test('Codex #1/#2/#4: gekürzte Liste und fehlendes Sperr-Label → unvollständ
   const viele = Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, headers: EM }));
   const f = gmail({ sent: viele });
   const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: f });
+  // fünf Gesendete in derselben Minute, Kappe 3: auch die kleinste Zeitscheibe ist voll → lauter Befund
   const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, maxMessages: 3, fetchImpl: f });
   assert.equal(r2.incomplete, true);
-  assert.equal(r2.state.lastRun, r1.state.lastRun, 'Fenster bleibt offen');
   assert.ok(r2.findings.some((x) => x.kind === 'error' && /zu viele/.test(x.detail)));
   // altes Zeitfenster wird nicht auf 7 Tage gekappt
   const alt = { ...r1.state, lastRun: NOW - 9 * 86_400_000 };
@@ -308,4 +313,87 @@ test('Codex #3/#4: Meldung sortiert Lautes nach vorn; Log bekommt alle Zeilen; u
   assert.equal(await run(ARGS(dir), deps(tot, { log: (s) => out.push(s) })), 3);
   assert.equal(tot.posts.length, 1, 'Fehler geht als Meldung raus');
   assert.match(tot.posts[0].body, /hello@: nicht geprüft/);
+});
+
+// ---------- reviewer S114 und Codex-Folgerunde ----------
+test('reviewer B2: Rückstand über mehrere Tage holt in Zeitscheiben auf, auch mit kleiner Kappe', async () => {
+  const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 5 * 86_400_000, fetchImpl: gmail() });
+  const tage = [4, 3, 2].map((d) => ({ id: `a${d}`, headers: API, at: NOW - d * 86_400_000 + 3_600_000 }));
+  const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, maxMessages: 1, fetchImpl: gmail({ sent: tage }) });
+  assert.equal(r2.findings.filter((x) => x.kind === 'sent').length, 3);
+  assert.equal(r2.incomplete, false);
+  assert.equal(r2.state.lastRun, NOW);
+});
+
+test('reviewer B1: Treffer im Spam oder Papierkorb werden nur gezählt, nicht gemeldet', async () => {
+  const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: gmail() });
+  const f = gmail({ inbox: [{ id: 'p1', labelIds: ['SPAM'], headers: H({ From: 'x@phish.example', Subject: 'Password reset', Date: 'x' }) }] });
+  const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, fetchImpl: f });
+  assert.deepEqual(r2.findings, []);
+  assert.equal(r2.counts.spam, 1);
+});
+
+test('reviewer B3: Einstellungen vor Gesendeten vor Listen-Lücken vor Kandidaten; Einstellungen nie gekürzt', () => {
+  const sent = Array.from({ length: 20 }, () => ({ kind: 'sent', domain: 'x.example', date: '1.1.', subject: 's', detail: 'fp' }));
+  const n = formatNotification([{ mailbox: 'a@example.org', findings: [...sent, { kind: 'security', domain: 'k.example', date: '1.1.', subject: 's' }] },
+    { mailbox: 'w@example.org', findings: [{ kind: 'security-list', domain: 'l.example', date: '1.1.', subject: 's' }, { kind: 'settings', change: 'neu', summary: 'Filter (Weiterleitung an @evil.example)' }] }]);
+  assert.match(n.body.split('\n')[0], /^w@: neu Filter/);
+  const viele = formatNotification([{ mailbox: BOX, findings: Array.from({ length: 20 }, (_, i) => ({ kind: 'settings', change: 'neu', summary: `Filter ${i}` })) }]);
+  assert.equal(viele.body.split('\n').filter((z) => /neu Filter/.test(z)).length, 20);
+});
+
+test('Codex-Folgerunde: Adresse in Anführungszeichen, Codes mit Leer- und Bindestrich, gemischte Codes maskiert', () => {
+  assert.equal(maskSubject('an "bob"@example.net'), 'an •@example.net');
+  assert.ok(!/123|456/.test(maskSubject('Dein Code lautet 123 456')));
+  assert.ok(!/123|456/.test(maskSubject('Code is 123-456')));
+  assert.ok(!/A7K|29Q/.test(maskSubject('Code A7K-29Q')));
+});
+
+test('Codex-Folgerunde: echte Codes mit Jahreszahl-Ziffern bleiben Kandidaten; Rabatt, Sendung, Lieferadresse nicht', () => {
+  for (const t of ['Your code: 2026', 'Your code: 1999']) assert.ok(securityCandidate({ subject: t }), t);
+  for (const t of ['Your discount code 2026', 'Bestellung 10423 ist unterwegs – Tracking-Link', 'Bitte bestätigen Sie Ihre Lieferadresse']) assert.equal(securityCandidate({ subject: t }), null, t);
+});
+
+test('reviewer nice 4: zufällige Base62-Grenzen ergeben denselben Abdruck', () => {
+  const a = H({ 'Content-Type': 'multipart/alternative; boundary="Apple-Mail=_Zq8xKpL2mW9vRt"' });
+  const b = H({ 'Content-Type': 'multipart/alternative; boundary="Apple-Mail=_Hy3uNbV7cX1sQe"' });
+  assert.equal(sentFingerprint(a), sentFingerprint(b));
+});
+
+test('reviewer B5: Grundstand und Dry-Run zeigen, was gelernt wird; einteilig ohne Client und Weiterleitung markiert', async (t) => {
+  const dir = tmpDir('mail-guard-', t);
+  const out = [];
+  const f = mitNtfy(gmail({ sent: [{ id: 'm1', headers: EM }, { id: 'm2', headers: API }], forwarding: [{ forwardingEmail: 'x@partner.example', verificationStatus: 'accepted' }] }));
+  assert.equal(await run(ARGS(dir, '--dry-run'), deps(f, { log: (s) => out.push(s) })), 0);
+  const o = out.join('\n');
+  assert.match(o, /gelernt Abdruck 1× ua:eMClient/);
+  assert.match(o, /gelernt Abdruck 1× ua:- id@gmail\.com b:- ⚠/);
+  assert.match(o, /gelernt Weiterleitungsadresse @partner\.example \(accepted\) ⚠/);
+  assert.ok(!o.includes('x@partner'));
+});
+
+test('reviewer nice 5/9/10: Dry-Run warnt ohne ntfy-Ziel; kaputter Zustand meldet; accept prüft den Abdruck', async (t) => {
+  const dir = tmpDir('mail-guard-', t);
+  const err = [];
+  await run(ARGS(dir, '--dry-run'), deps(mitNtfy(gmail()), { env: {}, err: (s) => err.push(s) }));
+  assert.match(err.join('\n'), /MAIL_GUARD_NTFY_URL nicht gesetzt/);
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(join(dir, `mail-guard-${BOX}.json`), '{"x":1}');
+  const f = mitNtfy(gmail());
+  assert.equal(await run(ARGS(dir), deps(f)), 3);
+  assert.match(f.posts[0]?.body ?? '', /Zustand/);
+  assert.equal(await run(['accept', '--mailbox', BOX, '--fingerprint', 'ua:-  id@gmail.com', '--state-dir', dir], deps(null)), 1);
+});
+
+test('reviewer nice 1: Einstellungs-Änderung wird auch bei fehlendem Sperr-Label gemeldet', async () => {
+  const r1 = await scanMailbox({ token: 'T', mailbox: BOX, state: null, now: NOW - 86_400_000, fetchImpl: gmail() });
+  const ohne = async (url, init) => {
+    const p = decodeURIComponent(new URL(url).pathname);
+    const ok = (b) => ({ ok: true, status: 200, json: async () => b, text: async () => JSON.stringify(b) });
+    if (p.endsWith('/labels')) return ok({ labels: [{ id: 'INBOX', name: 'INBOX' }] });
+    if (p.endsWith('/settings/filters')) return ok({ filter: [{ id: 'F9', criteria: { from: 'bank.example' }, action: { forward: 'dieb@evil.example' } }] });
+    return gmail()(url, init);
+  };
+  const r2 = await scanMailbox({ token: 'T', mailbox: BOX, state: r1.state, now: NOW, fetchImpl: ohne });
+  assert.ok(r2.findings.some((x) => x.kind === 'settings' && x.domain === 'evil.example'));
 });

@@ -15,7 +15,7 @@
     "./read": "./src/read/cli.js",
     "./read/google": "./src/read/google-read.js",
     "./package.json": "./package.json",
-    "./mail": "./src/mail/cli.js"
+    "./mail": "./src/mail/draft.js"
   },
   "bin": {
     "access-read": "bin/access-read.mjs",

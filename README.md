@@ -1,7 +1,7 @@
 # access-client
 
-Google- und 1Password-Zugänge als ein Paket ohne Fremd-Abhängigkeiten (Node ≥ 22, natives `fetch`), dazu der nur
-lesende Befehl `access-read` für Agenten-Sessions.
+Google- und 1Password-Zugänge als ein Paket ohne Fremd-Abhängigkeiten (Node ≥ 22, natives `fetch`), dazu für
+Agenten-Sessions der nur lesende Befehl `access-read` und der Entwurfs-Befehl `access-mail` (nie senden).
 
 **Herkunft:** Die sechs Module stammen aus dem privaten Repo `ArmagnacDE/shopify`, Commit `bb77df66` (15.11.2026),
 Dateien `lib/google-auth.js`, `lib/gmail.js`, `lib/drive.js`, `lib/sheets.js`, `lib/op-vault.js`, `lib/op-token.js`;
@@ -19,6 +19,7 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
 | `access-client/op-read` | `op read`, `op vault get` und `op item get` (Kopf, Einmal-Code) an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
+| `access-client/mail` | `draftMail`: ein Mail-Entwurf über das delegierte Dienstkonto, auch als Antwort in einen Verlauf; der Kern von `access-mail` (ab v1.3.0) |
 | `access-client/read/google` | nur lesende Drive- und Sheets-Aufrufe mit übergebenem Token (nur GET auf feste Pfade), dieselben, die `access-read` nutzt; für Werkzeuge, die ihr Token selbst holen, z. B. OpenClaw-Lesewerkzeuge (ab v1.2.0) |
 
 Im Repo liegen keine Zugangsdaten. Google-Credentials erwartet das Paket unter `~/.config/gsheets/` (ersetzbar mit
@@ -51,9 +52,14 @@ export * from 'access-client/gmail';
   einmal je Prozess; ein zweiter Aufruf mit anderen Werten wirft. Fehlt das Label im Postfach, gibt es standardmäßig
   eine Warnung und es wird weitergelesen (Verhalten für bestehende Jobs); mit `requireLabel: true` liest dann kein
   Inhaltspfad. `access-read` setzt `requireLabel: true`.
+- **Sicherheitsmails auch ohne Label (ab v1.3.0):** Mit `configureGmailGuard({ …, blockSecurityContent: true })`
+  schließt jede Suche zusätzlich die Merkmale der zwei Sicherheits-Filter aus (`-subject:(…) -from:(…)`), und Mail,
+  Verlauf und Anhang werden vor dem Inhalt an From und Subject geprüft (Prüfabruf `format=metadata`). Grund: Gmail-Filter
+  wirken nur auf neue Mails. Die Liste steht einmal in `src/security-mail.js` und speist auch die Filter der
+  Einrichtung (`scripts/security-label.mjs`). `access-read`, `access-mail` und openclaw-tools setzen es.
 - **Eine Ausnahme:** `readPortalCodeMails` liest Einmal-Codes für Portal-Logins, nur von Absendern aus
   `codeMailSenders` (Pflichtparameter des Aufrufers), nur aus den letzten 20 Minuten.
-- **Entwurf mit Profil-Prüfung:** `createCheckedDraft({ token, expectedMailbox, to, subject, html, cc, reply })`
+- **Entwurf mit Profil-Prüfung:** `createCheckedDraft({ token, expectedMailbox, to, subject, html | text, attachments, cc, reply })`
   legt genau einen Entwurf an, und nur, wenn das Gmail-Profil des Tokens `expectedMailbox` ist. Bei 5xx oder
   Verbindungsabbruch kein zweiter Versuch (der Entwurf kann trotzdem entstanden sein), Fehler mit „NICHT wiederholen“.
 
@@ -148,17 +154,49 @@ unter `~/.config/gsheets/` und das Sperr-Label, keine Geheimnisse:
 - `delegated`: domänenweit delegiertes Dienstkonto; je Aufruf wird genau ein Lese-Scope angefragt.
 - `filesAccount`: Konto für `drive`/`sheets` ohne `--as` (ohne Eintrag ist `--as` Pflicht).
 - `downloadDirs`: Ordner, in die `--out` schreiben darf (absolut oder `~/…`, höchstens 10).
+- `mailDelegation` (ab v1.3.0): `{ "key": "sa-mail.json", "domains": ["example.org"] }`. Mail (Lesen mit `access-read`,
+  Entwürfe mit `access-mail`) geht dann für **jedes echte Postfach** der Domains über dieses domänenweit delegierte
+  Dienstkonto: Adresse, Kontoname oder Kurzname (`hello` → `hello@<einzige Domain>`). Angefragt wird je Aufruf genau ein
+  Scope (`gmail.readonly` zum Lesen, `gmail.compose` für Entwürfe). Ein Konto nur mit `email` (ohne `token`/`delegated`)
+  ist dann ein reines Mail-Konto. Drive und Sheets bleiben bei den Konten. Aliase und Gruppen sind keine Postfächer
+  (Google meldet `invalid_grant`).
 - Lese-Tokens **ohne** `gmail.metadata` erzeugen: Hat ein Token diesen Scope, lehnt Gmail Suche und `format=full` ab.
 
 ### Installieren für Sessions
 
 ```
-scripts/install-cli.sh v1.0.0
+scripts/install-cli.sh v1.3.0
 ```
 
-legt `~/.local/share/access-client/v1.0.0/` schreibgeschützt aus dem Tag an und setzt `~/.local/bin/access-read`
-darauf. Eine Freigaberegel für Sessions nennt dann nur den Befehl `access-read`; was er ausführt, ist ein getaggter
+legt `~/.local/share/access-client/v1.3.0/` schreibgeschützt aus dem Tag an und setzt `~/.local/bin/access-read` und
+`~/.local/bin/access-mail` darauf. Eine Freigaberegel für Sessions nennt dann nur den Befehl `access-read`; was er ausführt, ist ein getaggter
 Stand, kein Arbeitsverzeichnis.
+
+## access-mail: Entwürfe, nie senden (ab v1.3.0)
+
+```
+access-mail draft --from <postfach> --to <adresse>[,…] --subject <betreff> (--body <text> | --body-file <datei>)
+                  [--cc <adresse>[,…]] [--html] [--attach <datei>]…
+access-mail draft --from <postfach> --reply-to <mail-id> (--body … | --body-file …) [--to …] [--subject …]
+```
+
+- Legt **einen** Entwurf im gewählten Postfach an (über `mailDelegation`, Scope `gmail.compose`), prüft vorher das
+  Gmail-Profil. Antwort: Verlauf, `In-Reply-To`/`References`, Empfänger aus `Reply-To` bzw. `From`, Betreff „Re: …“;
+  die Ausgangsmail geht durch den Wächter (Sicherheitsmails gesperrt).
+- **Senden ist nicht erreichbar:** Es gibt nur `draft`; der einzige Schreibweg ist `createCheckedDraft` → `drafts`
+  (`gmailPost` lehnt Versand-Pfade ab). `test/access-mail.test.mjs` probiert Unterbefehle, Optionen und Pfad-Tricks
+  durch und hält fest, dass nur `drafts.create` erreicht wird. Entwürfe sind Kommunikationsinhalte: Senden macht ein
+  Mensch in Gmail.
+- `--body-file` und `--attach` nur aus den `downloadDirs` (aufgelöster Pfad), damit kein Schlüssel und keine Repo-Datei
+  in einen Entwurf gerät; Anhänge höchstens 10, zusammen 15 MB. Bei 5xx oder Abbruch kein zweiter Versuch.
+
+## Sperr-Label einrichten: `scripts/security-label.mjs` (ab v1.3.0)
+
+Legt in jedem Postfach das Sperr-Label (`gmailBlockedLabel`) und die zwei Filter aus `src/security-mail.js` an (Aktion
+nur „Label anwenden“). Dry-Run ist Standard, `--apply` legt nur Fehlendes an, gelöscht und geändert wird nie; der
+Vorher-Stand und die neuen IDs landen in `~/.local/state/access-client/security-label-<zeit>.json`, `--rollback <datei>`
+zeigt sie für das Entfernen von Hand. Braucht in der Delegierung zusätzlich `gmail.labels` und `gmail.settings.basic`.
+Neues Postfach: `--mailbox <adresse>`.
 
 ## Änderungen gegenüber der Herkunft
 
@@ -179,6 +217,8 @@ Stand, kein Arbeitsverzeichnis.
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.3.0) `mailDelegation`, `access-mail`, `mail` (`draftMail`), `createCheckedDraft` mit `text` und `attachments`
+  (`buildDraftMime`), `blockSecurityContent`, `security-mail`, `gmail-setup` mit `scripts/security-label.mjs`.
 - neu (v1.2.0) `read/google`: die Lese-Funktionen von `access-read` (`driveQuery`, `driveInfo`, `driveDownload`, `sheetTabs`, `sheetValues`, `idFrom`, `nameQuery`, `folderQuery`) als eigener Export.
 - neu (v1.1.0) `op-read`: `opRead`, `opVaultGet`, `vaultGetMit`, `opItemHead`, `opItemOtp` statt eigener `op`-Aufrufe je Werkzeug.
 - `google-auth`: `GOOGLE_CONFIG_DIR`; `getAccessTokenFromFile` und `getDelegatedToken` nehmen optional `fetchImpl`;

@@ -10,6 +10,7 @@ import { tmpDir } from './helpers/tmpdir.mjs';
 import { run, parseArgs, writeOut, insideGitRepo } from '../src/read/cli.js';
 import { validateConfig, loadConfig, READ_ONLY_SCOPES } from '../src/read/accounts.js';
 import { idFrom } from '../src/read/google-read.js';
+import { securityExclusionQuery } from '../src/security-mail.js';
 
 const A = 'https://www.googleapis.com/auth/';
 const LESEN = `${A}gmail.readonly ${A}drive.readonly ${A}spreadsheets.readonly ${A}documents.readonly`;
@@ -123,7 +124,8 @@ test('mail search: Profil-Prüfung, Sperre für Sicherheitsmails, nur GET, Hinwe
   assert.deepEqual(r.json.mails.map((m) => [m.id, m.betreff]), [['m1', 'Angebot Ads']]);
   assert.match(r.json.hinweis, /fremder Text/);
   assert.ok(f.log.every((c) => c.method === 'GET' || c.host === 'oauth2.googleapis.com'), 'nur GET an die APIs');
-  assert.equal(f.log.find((c) => c.path.endsWith('/messages') && c.q.q)?.q.q, '(from:agentur.example) -label:agent-no-read');
+  // seit S112: zusätzlich die Merkmale der Sicherheits-Filter (ältere Mails ohne Label)
+  assert.equal(f.log.find((c) => c.path.endsWith('/messages') && c.q.q)?.q.q, `(from:agentur.example) -label:agent-no-read ${securityExclusionQuery()}`);
   assert.ok(f.log.some((c) => c.path.endsWith('/profile')), 'Profil geprüft');
 });
 

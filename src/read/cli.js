@@ -316,7 +316,7 @@ export async function run(argv, deps = {}) {
     const [cmd, ...rest] = pos;
     if (!cmd || cmd === 'help' || opt.help) { out.write(`${USAGE}\n`); return cmd || opt.help ? 0 : 2; }
     const config = loadConfig({ env: d.env });
-    configureGmailGuard({ blockedLabel: config.gmailBlockedLabel, requireLabel: true });
+    configureGmailGuard({ blockedLabel: config.gmailBlockedLabel, requireLabel: true, blockSecurityContent: true });
     let r;
     if (cmd === 'accounts') r = await cmdAccounts(opt, config, d);
     else if (cmd === 'mail') r = await cmdMail(rest, opt, config, d);

@@ -4,6 +4,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { getAccessToken } from './google-auth.js';
+import { isSecurityMail, securityExclusionQuery } from './security-mail.js';
 
 // ---------------------------------------------------------------------------------------------
 // Versand-Sperre: die Entwurfs-Regel im Code erzwingen.
@@ -31,14 +32,18 @@ const LABEL_RE = /^[a-z0-9-]{3,40}$/;
  * @param {{ blockedLabel: string, sendBlockedReason?: string, requireLabel?: boolean }} cfg  blockedLabel normalisiert
  *   (klein, „-“ statt Leerzeichen), so wie Gmail es in der Suche schreibt (label:<name>). requireLabel: Fehlt das Label
  *   im Postfach, liest kein Inhaltspfad (sonst nur eine Warnung im Log und weiterlesen, wie bisher für Jobs).
- * @returns {{ blockedLabel: string, sendBlockedReason: string, requireLabel: boolean }}
+ *   blockSecurityContent: zusätzlich Mails mit den Merkmalen der Sicherheits-Filter sperren, auch ohne Label (ältere
+ *   Mails, die vor dem Filter kamen; Liste src/security-mail.js): Suche schließt sie aus, Mail/Verlauf/Anhang werden
+ *   vor dem Inhalt an From und Subject geprüft.
+ * @returns {{ blockedLabel: string, sendBlockedReason: string, requireLabel: boolean, blockSecurityContent: boolean }}
  */
-export function configureGmailGuard({ blockedLabel, sendBlockedReason = SEND_BLOCKED_DEFAULT, requireLabel = false } = {}) {
+export function configureGmailGuard({ blockedLabel, sendBlockedReason = SEND_BLOCKED_DEFAULT, requireLabel = false, blockSecurityContent = false } = {}) {
   if (typeof blockedLabel !== 'string' || !LABEL_RE.test(blockedLabel)) throw new Error('configureGmailGuard: blockedLabel fehlt oder ist ungültig (a–z, 0–9, „-“, 3–40 Zeichen)');
   if (typeof sendBlockedReason !== 'string' || sendBlockedReason.length < 5 || sendBlockedReason.length > 200 || /[\r\n]/.test(sendBlockedReason)) throw new Error('configureGmailGuard: sendBlockedReason muss eine Zeile mit 5–200 Zeichen sein');
   if (typeof requireLabel !== 'boolean') throw new Error('configureGmailGuard: requireLabel muss true oder false sein');
-  const neu = Object.freeze({ blockedLabel, sendBlockedReason, requireLabel });
-  if (guard && (guard.blockedLabel !== neu.blockedLabel || guard.sendBlockedReason !== neu.sendBlockedReason || guard.requireLabel !== neu.requireLabel)) {
+  if (typeof blockSecurityContent !== 'boolean') throw new Error('configureGmailGuard: blockSecurityContent muss true oder false sein');
+  const neu = Object.freeze({ blockedLabel, sendBlockedReason, requireLabel, blockSecurityContent });
+  if (guard && (guard.blockedLabel !== neu.blockedLabel || guard.sendBlockedReason !== neu.sendBlockedReason || guard.requireLabel !== neu.requireLabel || guard.blockSecurityContent !== neu.blockSecurityContent)) {
     throw new Error('configureGmailGuard: Wächter ist in diesem Prozess schon anders konfiguriert');
   }
   guard ??= neu;
@@ -348,11 +353,30 @@ async function checkLabels(labels, state, o, what) {
   }
   return st;
 }
+/**
+ * Merkmale der Sicherheits-Filter an From/Subject prüfen (nur mit blockSecurityContent). strict: Kopfzeilen müssen
+ * vorhanden sein (Prüfabruf); sonst nur prüfen, was die Antwort trägt (Ergebnis mit format=full/metadata).
+ */
+function checkContent(j, kind, { strict = false } = {}) {
+  if (!guard?.blockSecurityContent) return;
+  const msgs = kind === 'thread' ? (Array.isArray(j?.messages) ? j.messages : []) : [j];
+  for (const m of msgs) {
+    const hs = m?.payload?.headers;
+    if (!Array.isArray(hs)) { if (strict) throw new GmailReadError('Gmail: Kopfzeilen für die Prüfung auf Sicherheitsmails fehlen; nichts gelesen'); continue; }
+    if (isSecurityMail({ from: headerOf(m, 'From'), subject: headerOf(m, 'Subject') })) {
+      throw new GmailBlockedError(`Gmail: ${kind === 'thread' ? 'Verlauf enthält eine Mail' : 'Mail'} mit Merkmal einer Sicherheitsmail (Absender oder Betreff); gesperrt`);
+    }
+  }
+}
 async function assertNotBlocked({ token, mailbox, fetchImpl, timeoutMs, state, kind, id }) {
   // Auch ohne gefundenes Sperr-Label: Der Prüfabruf zeigt, ob die Mail ein Label trägt, das der Stand nicht kennt.
-  const j = await rawGet({ token, mailbox, path: `${kind === 'thread' ? 'threads' : 'messages'}/${id}`, params: { format: 'minimal' }, fetchImpl, timeoutMs });
+  // Mit blockSecurityContent: metadata mit From/Subject statt minimal (trägt die Labels ebenso).
+  const params = guard.blockSecurityContent ? { format: 'metadata', metadataHeaders: ['From', 'Subject'] } : { format: 'minimal' };
+  const j = await rawGet({ token, mailbox, path: `${kind === 'thread' ? 'threads' : 'messages'}/${id}`, params, fetchImpl, timeoutMs });
   if (String(j?.id) !== decodeURIComponent(id)) throw new GmailReadError(`Gmail: Prüfabruf ${kind === 'thread' ? 'Verlauf' : 'Mail'} unvollständig; nichts gelesen`);
-  return checkLabels(labelsOfMinimal(j, kind), state, { token, mailbox, fetchImpl, timeoutMs }, kind);
+  const st = await checkLabels(labelsOfMinimal(j, kind), state, { token, mailbox, fetchImpl, timeoutMs }, kind);
+  checkContent(j, kind, { strict: true });
+  return st;
 }
 
 /**
@@ -369,7 +393,8 @@ export async function gmailGet({ token, mailbox, path, params = {}, fetchImpl = 
   let state = await labelState({ token, mailbox, fetchImpl, timeoutMs });
   if (p === 'messages') {
     assertBalancedQuery(params.q);
-    return rawGet({ token, mailbox, path, params: { ...params, q: `${params.q ? `(${params.q}) ` : ''}-label:${blockedLabel()}` }, fetchImpl, timeoutMs });
+    const inhalt = guard.blockSecurityContent ? ` ${securityExclusionQuery()}` : '';
+    return rawGet({ token, mailbox, path, params: { ...params, q: `${params.q ? `(${params.q}) ` : ''}-label:${blockedLabel()}${inhalt}` }, fetchImpl, timeoutMs });
   }
   const [, kind, id] = /^(messages|threads)\/([^/]+)/.exec(p);
   const what = kind === 'threads' ? 'thread' : 'message';
@@ -379,6 +404,7 @@ export async function gmailGet({ token, mailbox, path, params = {}, fetchImpl = 
   if (!p.includes('/attachments/')) {
     const ls = [...(Array.isArray(j?.labelIds) ? j.labelIds : []), ...(Array.isArray(j?.messages) ? j.messages.flatMap((x) => (Array.isArray(x?.labelIds) ? x.labelIds : [])) : [])];
     await checkLabels(ls, state, { token, mailbox, fetchImpl, timeoutMs }, what);
+    checkContent(j, what);
   }
   return j;
 }

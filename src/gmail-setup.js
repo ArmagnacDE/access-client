@@ -12,19 +12,16 @@
 // bräuchte es gmail.modify). Das sagt die Ausgabe des Skripts.
 
 import { assertNoSend, labelKey } from './gmail.js';
+import { SENDER_QUERY, SUBJECT_QUERY } from './security-mail.js';
 
 const USERS = 'https://gmail.googleapis.com/gmail/v1/users/';
 export const GMAIL_LABELS = 'https://www.googleapis.com/auth/gmail.labels';
 export const GMAIL_SETTINGS_BASIC = 'https://www.googleapis.com/auth/gmail.settings.basic';
 
-// Wörtlich aus Unraid openclaw/README.md (S29, E963 a). Änderungen dort und hier gemeinsam.
-const BETREFF = ['password reset', 'reset your password', 'Passwort zurücksetzen', 'Passwort vergessen', 'verification code',
-  'Bestätigungscode', 'Verifizierungscode', 'security code', 'Sicherheitscode', 'login code', 'Anmeldecode', 'sign-in code',
-  'one-time code', 'one-time password', 'Einmalcode', 'Einmalpasswort', '2FA', 'two-factor', 'Zwei-Faktor', 'magic link',
-  'Anmeldelink', 'login link', 'new sign-in', 'your code is', 'Dein Code lautet', 'Ihr Code lautet'];
+// Filter aus der gemeinsamen Liste (src/security-mail.js), dieselbe, die der Wächter prüft.
 export const SECURITY_FILTERS = Object.freeze([
-  Object.freeze({ name: 'filter-betreff', criteria: Object.freeze({ query: `subject:(${BETREFF.map((b) => `"${b}"`).join(' OR ')})` }) }),
-  Object.freeze({ name: 'filter-absender', criteria: Object.freeze({ from: 'accounts.google.com OR account-security-noreply@accountprotection.microsoft.com OR appleid@id.apple.com OR security@facebookmail.com' }) }),
+  Object.freeze({ name: 'filter-betreff', criteria: Object.freeze({ query: SUBJECT_QUERY }) }),
+  Object.freeze({ name: 'filter-absender', criteria: Object.freeze({ from: SENDER_QUERY }) }),
 ]);
 
 const PFADE = new Set(['labels', 'settings/filters']);

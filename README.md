@@ -165,6 +165,29 @@ unter `~/.config/gsheets/` und das Sperr-Label, keine Geheimnisse:
   (Google meldet `invalid_grant`).
 - Lese-Tokens **ohne** `gmail.metadata` erzeugen: Hat ein Token diesen Scope, lehnt Gmail Suche und `format=full` ab.
 
+### Tokens erzeugen (ab v1.5.1)
+
+Ein Konto mit `token` in `read.json` braucht eine OAuth-Token-Datei nur mit Lese-Scopes. `scripts/read-token.mjs`
+erzeugt sie in zwei Schritten, weil der Inhaber im eigenen Browser zustimmt und die Sitzung keine Eingabe hat:
+
+```
+node scripts/read-token.mjs start --account <name>
+node scripts/read-token.mjs finish --account <name> --url-file <datei mit der Weiterleitungs-URL>
+```
+
+- `start` zeigt die Anmelde-URL (Desktop-Client aus `oauth-client.json`, PKCE S256, `access_type=offline`,
+  `login_hint` = Adresse des Kontos) mit genau `drive.readonly`, `spreadsheets.readonly`, `documents.readonly`,
+  `userinfo.email`, `openid`. Zwischenstand (state, Verifier, kein Secret) unter
+  `~/.local/state/access-client/read-token-<name>.json`, Rechte 600.
+- Nach der Zustimmung landet der Browser auf `http://127.0.0.1:8765/…` („nicht erreichbar“ ist richtig); die ganze
+  Adresse aus der Adresszeile geht an `finish`. Der Code darin ist ohne den Verifier dieser Maschine wertlos und verfällt
+  nach Minuten.
+- `finish` schreibt die Datei aus `read.json` (`token`) unter `~/.config/gsheets/` nur, wenn `state` passt, Google
+  genau Lese-Scopes meldet (mindestens Drive und Sheets), ein `refresh_token` kommt und das angemeldete Konto
+  (`id_token`) das aus `read.json` ist: neue Datei, Rechte 600, nie überschrieben, nur `refresh_token`, `scope`,
+  `token_uri`. Die Ausgabe nennt nie ein Token. Gegenprobe: `access-read accounts --check`.
+- Rückweg: Datei löschen und unter https://myaccount.google.com/permissions den Zugriff der App entziehen.
+
 ### Installieren für Sessions
 
 ```
@@ -271,6 +294,10 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
+  „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); Einzelwörter im Betreff-Filter ohne
+  Anführungszeichen (Länge). Achtung: Der Betreff-Filter ändert sich, `scripts/security-label.mjs --apply` legt ihn
+  neu an; den alten Filter (mit „two-step“) entfernt der Inhaber von Hand (das Skript löscht nichts).
 - neu (v1.5.0) Merkmal-Liste um Varianten und Französisch ergänzt (A782 a); To/Cc mit Anzeigenamen nach RFC 2047
   (`encodeAddressHeader`, auch in `buildMime`); Google-Token-Abrufe ohne Weiterleitung (`redirect: 'error'`) mit
   lesbarem Grund (`netzGrund`); Weiterleitungs-Befunde im `mail-guard` wie oben.

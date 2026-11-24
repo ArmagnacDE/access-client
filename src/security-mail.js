@@ -3,6 +3,10 @@
 // „Gmail-Filter für Sicherheitsmails“ (S29, Board E963 a); Änderungen hier und dort gemeinsam.
 // Warum auch im Wächter: Gmail-Filter wirken nur auf neue Mails, ältere Sicherheitsmails tragen das Label nicht
 // (S112 „Ein Mail-Weg für Sessions und Agenten“, 24.11.2026).
+//
+// BEWUSST NICHT UMGESETZT (Cross-Review S112, Codex #1): Die Liste deckt nicht jede Sicherheitsmail ab (z. B. Betreff
+// „Your authentication code“ von einem anderen Absender). Sie ist absichtlich genau die der Gmail-Filter (eine Quelle,
+// Filter stehen seit 24.11. in allen Postfächern); erweitert wird sie mit Sascha, dann Filter neu (security-label.mjs).
 
 export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your password', 'Passwort zurücksetzen', 'Passwort vergessen',
   'verification code', 'Bestätigungscode', 'Verifizierungscode', 'security code', 'Sicherheitscode', 'login code', 'Anmeldecode',

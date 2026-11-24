@@ -220,7 +220,7 @@ access-mail draft --from <postfach> --reply-to <mail-id> (--body … | --body-fi
 
 Legt in jedem Postfach das Sperr-Label (`gmailBlockedLabel`) und die Filter aus `src/security-mail.js` an (Betreff auf
 mehrere Filter verteilt, ab v1.5.1, dazu ein Absender-Filter) (Aktion
-nur „Label anwenden“). Dry-Run ist Standard, `--apply` legt nur Fehlendes an, gelöscht und geändert wird nie; der
+nur „Label anwenden“). Dry-Run ist Standard, `--apply` legt nur Fehlendes an, gelöscht und geändert wird dabei nie (Löschen nur über `--remove-old`, unten); der
 Vorher-Stand und die neuen IDs landen in `~/.local/state/access-client/security-label-<zeit>.json`, `--rollback <datei>`
 zeigt sie für das Entfernen von Hand. Braucht in der Delegierung zusätzlich `gmail.labels` und `gmail.settings.basic`.
 Neues Postfach: `--mailbox <adresse>`.

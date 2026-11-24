@@ -105,6 +105,8 @@ export async function removeOldFilters({ token, mailbox, candidates, fetchImpl =
 export async function restoreFilters({ token, mailbox, filters, fetchImpl = fetch, dryRun = false }) {
   const live = (await call({ token, mailbox, path: 'settings/filters', fetchImpl })).filter ?? [];
   const created = []; const skipped = [];
+  // nur zurück, was --remove-old löschen durfte (reviewer S137: eine veränderte Datei könnte sonst Weiterleitungen anlegen)
+  for (const f of filters) if (!isOldListFilter(f)) throw new Error(`Filter-Aufräumen: ${String(f?.id).slice(0, 40)} ist kein alter Betreff-Sperrfilter; nichts angelegt`);
   for (const f of filters) {
     if (live.some((x) => gleich(x, f))) { skipped.push(f.id); continue; }
     if (dryRun) { created.push({ alt: f.id, id: null }); continue; }

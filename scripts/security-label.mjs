@@ -32,12 +32,14 @@ if (opt.apply && opt['dry-run']) { console.error('--apply und --dry-run zusammen
 
 if (opt.rollback) {
   const s = JSON.parse(readFileSync(opt.rollback, 'utf8'));
-  console.log(`Lauf ${s.zeit}: angelegt (dieses Skript löscht nichts; Entfernen von Hand in Gmail → Einstellungen → Filter bzw. Labels):`);
+  console.log(`Lauf ${s.zeit}: angelegt (--rollback löscht nichts; Entfernen von Hand in Gmail → Einstellungen → Filter bzw. Labels):`);
   for (const p of s.postfaecher ?? []) for (const c of p.created ?? []) console.log(`  ${p.mailbox}: ${c.name} ${c.id ?? ''}`);
   process.exit(0);
 }
 
 const config = loadConfig();
+// leerer Wert (z. B. leere Shell-Variable) darf nicht in die Einrichtung mit --apply fallen (reviewer S137)
+if (opt['remove-old'] === '' || opt.restore === '' || opt.rollback === '') { console.error('Dateipfad leer: nichts getan'); process.exit(2); }
 if (opt['remove-old'] || opt.restore) {
   if (opt['remove-old'] && opt.restore) { console.error('--remove-old und --restore zusammen: unklar, nichts getan'); process.exit(2); }
   if (opt['dry-run'] && opt.apply) { console.error('--apply und --dry-run zusammen: unklar, nichts getan'); process.exit(2); }
@@ -70,12 +72,13 @@ if (opt['remove-old'] || opt.restore) {
         continue;
       }
       const r = await removeOldFilters({ token, mailbox: mb.email, candidates,
-        backup: async (liste) => { gesichert.postfaecher.push({ mailbox: mb.email, filters: liste }); sichere(); } });
+        backup: async (liste) => { gesichert.postfaecher.push({ mailbox: mb.email, filters: liste }); sichere(); },
+        onDeleted: (id) => console.log(`${mb.email}: gelöscht ${id}`) });
       if (r.blocked) { fehler++; console.error(`${mb.email}: GESPERRT ${r.blocked}`); continue; }
       console.log(`${mb.email}: gelöscht ${r.deleted.join(', ') || '–'}${r.gone.length ? `; schon weg ${r.gone.join(', ')}` : ''}${r.changed.length ? `; geändert, bleibt ${r.changed.join(', ')}` : ''}`);
     } catch (e) { fehler++; console.error(`${p.mailbox}: FEHLER ${String(e.message).slice(0, 300)}`); }
   }
-  if (opt['remove-old'] && opt.apply) console.log(`Sicherung: ${sicherung}\nRückweg: node scripts/security-label.mjs --restore ${sicherung} --apply`);
+  if (opt['remove-old'] && opt.apply && gesichert.postfaecher.length) console.log(`Sicherung: ${sicherung}\nRückweg: node scripts/security-label.mjs --restore ${sicherung} --apply`);
   else if (!opt.apply) console.log('Dry-Run, nichts geändert. Live: --apply');
   process.exit(fehler ? 1 : 0);
 }

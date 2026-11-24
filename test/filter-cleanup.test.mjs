@@ -98,3 +98,10 @@ test('Codex: alle Löschungen eines Postfachs vor dem ersten DELETE gesichert (a
   await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: [NEU[0]], fetchImpl: gmail([...NEU]), backup: async () => {} }), /kein alter Betreff-Sperrfilter/);
   await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: ALT, fetchImpl: gmail([...ALT, ...NEU]) }), /Sicherung/);
 });
+
+test('reviewer: Restore legt nur alte Betreff-Sperrfilter an, nie Weiterleitung oder Fremdes', async () => {
+  const f = gmail([...NEU]);
+  await assert.rejects(restoreFilters({ token: 'T', mailbox: BOX, filters: [{ ...ALT[0], action: { addLabelIds: [L], forward: 'x@example.com' } }], fetchImpl: f }), /kein alter/);
+  await assert.rejects(restoreFilters({ token: 'T', mailbox: BOX, filters: [FREMD[0]], fetchImpl: f }), /kein alter/);
+  assert.ok(f.log.every((c) => c.method === 'GET'));
+});

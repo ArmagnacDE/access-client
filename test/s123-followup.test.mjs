@@ -21,14 +21,18 @@ test('Merkmal-Liste: alle Arten aus A782 a auch in Varianten und auf Französisc
     // c new login / device
     'Neue Anmeldung bei Wise', 'Neues Gerät angemeldet', 'Nouvelle connexion à votre compte', 'Connexion depuis un nouvel appareil',
     // d multi-factor / two-step
-    'Multi-Faktor-Authentifizierung aktiviert', 'Zweistufige Bestätigung', '2-step verification turned on',
+    'Multi-Faktor-Authentifizierung aktiviert', 'Zweistufige Verifizierung aktiviert', '2-step verification turned on',
     'Authentification à deux facteurs activée', 'Authentification multifacteur',
     // e Identität verifizieren
-    'Bitte Identität verifizieren', 'Identität bestätigen', 'Verify your identity', 'Vérifiez votre identité', 'Merci de vérifier votre identité',
+    'Bitte Identität verifizieren', 'Identität bestätigen', 'Verify your identity', 'Vérifiez votre identité',
     // f security alert
-    'Sicherheitshinweis zu Ihrem Konto', 'Alerte de sécurité', 'Votre code de vérification',
+    'Alerte de sécurité', 'Votre code de vérification',
   ]) assert.ok(isSecurityMail({ from: 'x@y.example', subject }), subject);
-  for (const subject of ['Bestellbestätigung #1042', 'Votre commande est expédiée', 'Neues Armagnac-Paket', 'Passwortgeschützte Datei']) {
+  // Geschäftsmails bleiben lesbar (Codex S123 #1)
+  for (const subject of ['Bestellbestätigung #1042', 'Votre commande est expédiée', 'Neues Armagnac-Paket', 'Passwortgeschützte Datei',
+    'Confirmez votre adresse de livraison pour votre commande', 'Vérifiez votre adresse de facturation', 'Liefertermin für Ihr neues Gerät',
+    'Votre nouvel appareil est expédié', 'Zweistufige Destillation im Alambic', 'Sicherheitshinweis zum Produkt (GPSR)',
+    'Neue Anmeldung zur Verkostung', 'Neues Gerät für das Lager']) {
     assert.equal(isSecurityMail({ from: 'x@y.example', subject }), false, subject);
   }
   assert.ok(SUBJECT_QUERY.length < 1400, `Gmail-Filter bleibt unter der Längengrenze (${SUBJECT_QUERY.length})`);
@@ -67,6 +71,8 @@ test('To und Cc: Anzeigenamen mit Umlauten nach RFC 2047, Adresse bleibt lesbar'
   assert.equal(kopf(m, 'Cc'), `Cc: ${b('Doe, Jäne')} <jd@example.fr>`);
   assert.equal(kopf(buildDraftMime({ to: 'Jane Doe <j@x.de>', subject: 'x', text: 'y' }), 'To'), 'To: Jane Doe <j@x.de>', 'ASCII unverändert');
   assert.equal(kopf(buildMime('Zoë <z@x.de>', 's', '<p>x</p>'), 'To'), `To: ${b('Zoë')} <z@x.de>`);
+  // maskierte Anführungszeichen trennen nicht (Codex S123 #2)
+  assert.equal(kopf(buildDraftMime({ to: '"Jörg \\"Sales, DACH\\"" <jm@example.de>, b@x.de', subject: 'x', text: 'y' }), 'To'), `To: ${b('Jörg "Sales, DACH"')} <jm@example.de>, b@x.de`);
 });
 
 test('Token-Abruf: keine Weiterleitung folgen, Fehler lesbar', async () => {

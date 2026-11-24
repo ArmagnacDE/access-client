@@ -117,9 +117,10 @@ function encodeHeader(value) {
 
 /** An Komma/Semikolon trennen, aber nicht in Anführungszeichen („"Doe, Jane" <j@x>“). */
 function splitAddressList(t) {
-  const out = []; let cur = ''; let quoted = false;
+  const out = []; let cur = ''; let quoted = false; let esc = false;
   for (const ch of String(t ?? '')) {
-    if (ch === '"') quoted = !quoted;
+    // \" in einer quoted-string ist ein Zeichen, kein Ende (Codex S123 #2)
+    if (esc) esc = false; else if (quoted && ch === '\\') esc = true; else if (ch === '"') quoted = !quoted;
     if (!quoted && (ch === ',' || ch === ';')) { out.push(cur); cur = ''; } else cur += ch;
   }
   out.push(cur);

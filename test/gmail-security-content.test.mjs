@@ -82,3 +82,11 @@ test('Mail, Verlauf und Anhang mit Sicherheits-Merkmal: gesperrt, Inhalt nie abg
   const m = await getMessage({ ...A, id: 'aa03', format: 'full', fetchImpl: ok });
   assert.equal(m.id, 'aa03');
 });
+
+test('reviewer S112 B1: wortweise wie Gmail (Bindestrich = Trenner, kein Treffer mitten im Wort)', () => {
+  assert.equal(isSecurityMail({ from: 'a@b.example', subject: 'Your one time password' }), true);
+  assert.equal(isSecurityMail({ from: 'a@b.example', subject: 'New sign in on Mac' }), true);
+  assert.equal(isSecurityMail({ from: 'a@b.example', subject: 'Two-factor: neue Anmeldung' }), true);
+  assert.equal(isSecurityMail({ from: 'a@b.example', subject: 'Ticket A2FA91 erledigt' }), false);
+  assert.equal(isSecurityMail({ from: 'no-reply@accounts.google.com', subject: 'x' }), true);
+});

@@ -87,3 +87,10 @@ test('Codex S112 #3: jede Anlage wird sofort gemeldet (Teilfehler verliert keine
   await assert.rejects(applySecurityLabel({ ...T, mailbox: BOX, label: 'security-no-read', fetchImpl: brichtAb, onCreated: (c) => gemeldet.push(c.name) }), /API 500/);
   assert.deepEqual(gemeldet, ['label', 'filter-betreff']);
 });
+
+test('reviewer S112 N5: security-label.mjs mit --apply und --dry-run bricht ab, bevor etwas geladen wird', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, [new URL('../scripts/security-label.mjs', import.meta.url).pathname, '--apply', '--dry-run'], { env: { ...process.env, ACCESS_READ_CONFIG: '/nicht/da.json' }, encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--apply und --dry-run/);
+});

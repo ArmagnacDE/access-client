@@ -13,8 +13,8 @@
 //
 // Ausgabe: JSON auf stdout.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, extname, isAbsolute, join } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { configDir } from '../google-auth.js';
 import { configureGmailGuard } from '../gmail.js';
 import { AccessReadError, loadConfig, resolveMailbox } from '../read/accounts.js';
@@ -55,7 +55,13 @@ export function readInput(p, dirs, max, was) {
   let echt;
   try { echt = realpathSync(p); } catch { throw new AccessReadError(`${was}: Datei fehlt`); }
   const erlaubt = dirs.map((d) => { try { return realpathSync(d); } catch { return null; } }).filter(Boolean);
-  if (!erlaubt.some((d) => echt.startsWith(d.endsWith('/') ? d : `${d}/`))) throw new AccessReadError(`${was}: Datei liegt in keinem Ablage-Ordner (downloadDirs: ${dirs.join(', ')})`);
+  const wurzel = erlaubt.find((d) => echt.startsWith(d.endsWith('/') ? d : `${d}/`));
+  if (!wurzel) throw new AccessReadError(`${was}: Datei liegt in keinem Ablage-Ordner (downloadDirs: ${dirs.join(', ')})`);
+  // Kein Git-Repo zwischen Ablage-Ordner und Datei (reviewer S112 B2: Arbeitskopien unter ~/.local/state, Scratchpads).
+  // Ein .git im Ablage-Ordner selbst oder darüber zählt nicht (~/.cache/claude-tmp hat eins, sonst ginge kein Scratchpad).
+  for (let d = dirname(echt); d.length > wurzel.length && d.startsWith(wurzel); d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) throw new AccessReadError(`${was}: Datei liegt in einem Git-Repo (${d}); Texte und Anhänge nur außerhalb von Repos`);
+  }
   const st = statSync(echt);
   if (!st.isFile()) throw new AccessReadError(`${was}: keine reguläre Datei`);
   if (st.size > max) throw new AccessReadError(`${was}: Datei über ${Math.round(max / 1024 / 1024)} MB`);
@@ -68,7 +74,11 @@ async function cmdDraft(opt, config, deps) {
   if (!opt['reply-to'] && (!opt.to || !opt.subject)) throw new AccessReadError('draft braucht --to und --subject (oder --reply-to)', { usage: true });
   if (opt.subject != null && /[\r\n]/.test(opt.subject)) throw new AccessReadError('--subject: Zeilenumbruch nicht erlaubt', { usage: true });
   const mb = resolveMailbox(config, opt.from);
-  if (mb.kind !== 'delegated') throw new AccessReadError('Entwürfe nur über die Mail-Delegierung (mailDelegation in der Konfiguration)');
+  // Nur der Schlüssel der Mail-Delegierung und nur ihre Domains, nie ein anderes delegated-Konto (reviewer S112 B3)
+  const md = config.mailDelegation;
+  if (!md || mb.kind !== 'delegated' || mb.file !== md.key || !md.domains.includes(mb.email.split('@')[1])) {
+    throw new AccessReadError('Entwürfe nur über die Mail-Delegierung (mailDelegation in der Konfiguration, Postfach ihrer Domain)');
+  }
   // Dateien zuerst prüfen und lesen, dann erst Netz.
   const body = opt.body != null ? String(opt.body) : readInput(opt['body-file'], config.downloadDirs, BODY_MAX, '--body-file').toString('utf8');
   const attach = opt.attach ?? [];

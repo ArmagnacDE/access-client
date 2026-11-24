@@ -189,8 +189,15 @@ async function cmdMail(pos, opt, config, deps) {
     const token = await gmailFor(account, deps);
     const { ids, truncated } = await listMessageIds({ token, mailbox: account.email, q, max, fetchImpl: f });
     const mails = [];
-    for (const { id } of ids) mails.push(mailSummary(await getMessage({ token, mailbox: account.email, id, format: 'metadata', fetchImpl: f })));
-    return { konto: account.email, suche: q, anzahl: mails.length, weitere: truncated, mails };
+    let ausgeblendet = 0;
+    for (const { id } of ids) {
+      // Trifft die Merkmal-Sperre einen Treffer, den die Suche nicht ausschloss: ausblenden und zählen (reviewer S112 B1)
+      try { mails.push(mailSummary(await getMessage({ token, mailbox: account.email, id, format: 'metadata', fetchImpl: f }))); } catch (e) {
+        if (!e?.blocked) throw e;
+        ausgeblendet++;
+      }
+    }
+    return { konto: account.email, suche: q, anzahl: mails.length, weitere: truncated, ...(ausgeblendet ? { ausgeblendet } : {}), mails };
   }
   if (sub === 'show') {
     const [id] = rest;

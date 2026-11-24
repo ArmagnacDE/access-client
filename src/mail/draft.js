@@ -5,10 +5,11 @@
 // Ausgangsmail einer Antwort geht durch ihn (Sicherheitsmails gesperrt).
 
 import { getDelegatedToken } from '../google-auth.js';
-import { createCheckedDraft, GMAIL_COMPOSE, GMAIL_READONLY, gmailGet, headerOf, msgIdList } from '../gmail.js';
+import { createCheckedDraft, emailOf, GMAIL_COMPOSE, GMAIL_READONLY, gmailGet, headerOf, msgIdList } from '../gmail.js';
 import { AccessReadError, delegationHint } from '../read/accounts.js';
 
-const ADRESSE = /^[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}$|^[^<>\r\n]*<[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}>$/;
+// Anzeigename ohne „@“: sonst sähe „kunde@firma <angreifer@x>“ im Entwurf aus wie die Kundenadresse (reviewer S112 N2)
+const ADRESSE = /^[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}$|^[^<>\r\n@]*<[^\s@<>"]+@[^\s@<>"]+\.[A-Za-z]{2,}>$/;
 /** An Komma/Semikolon trennen, aber nicht in Anführungszeichen („"Doe, Jane" <j@x>“, Codex S112 #4). */
 function splitAddresses(t) {
   const out = []; let cur = ''; let quoted = false;
@@ -41,12 +42,13 @@ async function replyBase(keyFile, mailbox, id, fetchImpl) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(id))) throw new AccessReadError('replyTo braucht eine Mail-ID (aus der Suche)', { usage: true });
   const m = await gmailGet({
     token: await token(keyFile, mailbox, GMAIL_READONLY, fetchImpl), mailbox, path: `messages/${id}`, fetchImpl,
-    params: { format: 'metadata', metadataHeaders: ['From', 'Reply-To', 'Subject', 'Message-ID', 'References'] },
+    params: { format: 'metadata', metadataHeaders: ['From', 'To', 'Reply-To', 'Subject', 'Message-ID', 'References'] },
   });
   if (m?.id !== id || typeof m.threadId !== 'string') throw new AccessReadError('Ausgangsmail: Antwort unvollständig');
   const messageId = msgIdList(headerOf(m, 'Message-ID'));
   return {
-    an: headerOf(m, 'Reply-To') || headerOf(m, 'From'), betreff: headerOf(m, 'Subject'),
+    // Antwort auf die eigene Mail (letzte im Verlauf von diesem Postfach): an deren Empfänger, nicht an sich selbst (N1)
+    an: emailOf(headerOf(m, 'From')) === mailbox ? headerOf(m, 'To') : (headerOf(m, 'Reply-To') || headerOf(m, 'From')), betreff: headerOf(m, 'Subject'),
     reply: { inReplyTo: messageId, references: `${msgIdList(headerOf(m, 'References'))} ${messageId}`.trim(), threadId: m.threadId },
   };
 }

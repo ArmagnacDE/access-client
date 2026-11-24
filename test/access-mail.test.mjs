@@ -278,3 +278,50 @@ test('resolveMailbox: Konto mit eigenem Token außerhalb der Delegierungs-Domain
   assert.deepEqual([a.kind, a.file], ['token', 'token-read-p.json']);
   assert.throws(() => resolveMailbox(c, 'x@other.example'), /nicht in der Domain/);
 });
+
+test('reviewer S112 B1: access-read search blendet gesperrte Treffer aus statt abzubrechen', async (t) => {
+  const { env } = setup(t);
+  const f = google({ mails: { aa11bb22: { labels: ['INBOX'], headers: { From: 'a@b.example', Subject: 'Hallo' } }, cc33dd44: { labels: ['INBOX'], headers: { From: 'x@y.example', Subject: 'Dein Code lautet 1' } } } });
+  const r = await call(runRead, ['mail', 'hello', 'search', 'x'], { fetchImpl: f, env });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json.anzahl, 1);
+  assert.equal(r.json.ausgeblendet, 1);
+});
+
+test('reviewer S112 B2: --attach/--body-file aus einem Git-Repo unterhalb der Ablage abgelehnt', async (t) => {
+  const { env, ablage } = setup(t);
+  fs.mkdirSync(path.join(ablage, 'repo', '.git'), { recursive: true });
+  fs.writeFileSync(path.join(ablage, 'repo', 'geheim.txt'), 'x');
+  const f = google();
+  const r = await call(runMail, ['draft', '--from', 'hello', '--to', 'a@b.example', '--subject', 's', '--body-file', path.join(ablage, 'repo', 'geheim.txt')], { fetchImpl: f, env });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Git-Repo/);
+  assert.equal(f.log.length, 0);
+});
+
+test('reviewer S112 B3: Entwurf nur über den Schlüssel der Mail-Delegierung, nie über ein anderes delegated-Konto', async (t) => {
+  const { env } = setup(t, { ...KONFIG, accounts: { ...KONFIG.accounts, ext: { email: 'x@fremd.example', delegated: 'sa-alt.json' } } });
+  const f = google();
+  const r = await call(runMail, ['draft', '--from', 'ext', '--to', 'a@b.example', '--subject', 's', '--body', 'b'], { fetchImpl: f, env });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /nur über die Mail-Delegierung/);
+  const { mailDelegation, ...ohne } = KONFIG;
+  const { env: env2 } = setup(t, { ...ohne, accounts: { ext: { email: 'x@fremd.example', delegated: 'sa-alt.json' } }, filesAccount: undefined });
+  const s = await call(runMail, ['draft', '--from', 'ext', '--to', 'a@b.example', '--subject', 's', '--body', 'b'], { fetchImpl: f, env: env2 });
+  assert.equal(s.code, 1);
+  assert.match(s.err, /nur über die Mail-Delegierung/);
+  assert.equal(f.log.length, 0);
+});
+
+test('reviewer S112 N1/N2/N12: Antwort auf eigene Mail geht an deren Empfänger; @ im Anzeigenamen; Prototyp-Namen', async (t) => {
+  const { env } = setup(t);
+  const f = google({ mails: { ee55ff66: { labels: ['SENT'], headers: { From: `Mail <mail@${DOM}>`, To: 'Kunde <k@kunde.example>', Subject: 'Re: Frage', 'Message-ID': '<m@x.example>' } } } });
+  const r = await call(runMail, ['draft', '--from', 'mail', '--reply-to', 'ee55ff66', '--body', 'Nachtrag'], { fetchImpl: f, env });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json.an, ['Kunde <k@kunde.example>']);
+  const { addressList } = await import('../src/mail/draft.js');
+  assert.throws(() => addressList('kunde@firma.example <angreifer@evil.example>', 'to'), /keine Adresse/);
+  const c = validateConfig(KONFIG);
+  for (const w of ['constructor', 'toString']) assert.equal(resolveMailbox(c, w).email, `${w.toLowerCase()}@${DOM}`);
+  assert.throws(() => resolveMailbox(c, '__proto__'), /ungültig/);
+});

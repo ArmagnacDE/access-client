@@ -121,7 +121,7 @@ export function resolveMailbox(config, wer) {
   }
   const w = String(wer ?? '').trim().toLowerCase();
   if (!w) throw new AccessReadError('Postfach fehlt', { usage: true });
-  const konto = config.accounts[w];
+  const konto = Object.hasOwn(config.accounts, w) ? config.accounts[w] : undefined;
   let email;
   if (konto) email = konto.email;
   else if (EMAIL.test(w)) email = w;
@@ -159,7 +159,7 @@ export function loadConfig({ env = process.env, readFile = readFileSync } = {}) 
 export function resolveAccount(config, wer) {
   const w = String(wer ?? '').trim().toLowerCase();
   if (!w) throw new AccessReadError('Konto fehlt', { usage: true });
-  const a = config.accounts[w] ?? Object.values(config.accounts).find((x) => x.email === w);
+  const a = (Object.hasOwn(config.accounts, w) ? config.accounts[w] : undefined) ?? Object.values(config.accounts).find((x) => x.email === w);
   if (!a) throw new AccessReadError(`Konto „${w.slice(0, 64)}“ unbekannt; bekannt: ${Object.values(config.accounts).map((x) => `${x.name} (${x.email})`).join(', ')}`);
   return a;
 }

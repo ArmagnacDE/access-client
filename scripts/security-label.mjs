@@ -21,6 +21,7 @@ import { parseArgs } from '../src/read/cli.js';
 
 const { pos, opt } = parseArgs(process.argv.slice(2), { values: ['rollback'], multi: ['mailbox'], flags: ['apply', 'dry-run'] });
 if (pos.length) { console.error(`unerwartet: ${pos[0]}`); process.exit(2); }
+if (opt.apply && opt['dry-run']) { console.error('--apply und --dry-run zusammen: unklar, nichts getan'); process.exit(2); }
 
 if (opt.rollback) {
   const s = JSON.parse(readFileSync(opt.rollback, 'utf8'));

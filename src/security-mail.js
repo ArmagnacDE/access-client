@@ -22,11 +22,15 @@ export const SENDER_QUERY = SECURITY_SENDERS.join(' OR ');
 /** Zusatz für jede Gmail-Suche: schließt beide Filter-Merkmale aus. */
 export const securityExclusionQuery = () => `-${SUBJECT_QUERY} -from:(${SENDER_QUERY})`;
 
-const klein = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ');
-const BETREFFE = SECURITY_SUBJECTS.map(klein);
-/** Trifft ein Merkmal zu? Betreff enthält eine Phrase (Groß/klein und Leerraum egal) oder From enthält einen Absender. */
+// Wortweise wie die Gmail-Suche (reviewer S112 B1): Satzzeichen und Bindestriche sind Trenner, eine Phrase trifft nur
+// ganze Wörter („one-time password“ = „one time password“, aber „2FA“ nicht in „A2FA91“). Grenzfälle, die Gmail
+// anders zerlegt, sind möglich; die Suche schließt dann aus, was der Wächter nicht sperrt, oder umgekehrt (dann blendet
+// access-read den Treffer aus, statt abzubrechen).
+const woerter = (s) => ` ${String(s ?? '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+const BETREFFE = SECURITY_SUBJECTS.map(woerter);
+/** Trifft ein Merkmal zu? Betreff enthält eine Phrase (ganze Wörter) oder From enthält einen der Absender. */
 export function isSecurityMail({ from, subject }) {
-  const s = klein(subject);
-  const f = klein(from);
+  const s = woerter(subject);
+  const f = String(from ?? '').toLowerCase();
   return BETREFFE.some((b) => s.includes(b)) || SECURITY_SENDERS.some((x) => f.includes(x));
 }

@@ -3,7 +3,8 @@
 // „Gmail-Filter für Sicherheitsmails“; der Gmail-Wächter (src/gmail.js, requireLabel) liest ein Postfach erst, wenn
 // das Label dort existiert.
 //
-// Grenzen: nur GET labels / settings/filters und POST labels / settings/filters (Anlegen). Kein Ändern, kein Löschen,
+// Grenzen: nur GET labels / settings/filters und POST labels / settings/filters (Anlegen); für den Mail-Wächter
+// zusätzlich GET auf Weiterleitungen, Delegierungen, IMAP und POP (readMailSettings). Kein Ändern, kein Löschen,
 // kein Senden, keine Weiterleitung: die Filter-Aktion ist nur „Label anwenden“ (nicht Posteingang überspringen, Sascha
 // sieht die Mails wie bisher). Idempotent: angelegt wird nur, was fehlt. Scopes: gmail.labels (Label) und
 // gmail.settings.basic (Filter), je ein eigener Token.
@@ -25,12 +26,17 @@ export const SECURITY_FILTERS = Object.freeze([
 ]);
 
 const PFADE = new Set(['labels', 'settings/filters']);
+// Nur lesend für den Mail-Wächter (S114): Weiterleitungen, Delegierungen, IMAP/POP; nie schreibend erreichbar.
+// Nur Listen kommen leer, wenn sie leer sind (reviewer S114 nice 8); imap/pop/autoForwarding leer wäre ein Fehler.
+const LISTEN = new Set(['settings/filters', 'settings/forwardingAddresses', 'settings/delegates']);
+const NUR_LESEN = new Set(['settings/forwardingAddresses', 'settings/autoForwarding', 'settings/imap', 'settings/pop', 'settings/delegates']);
 const MAILBOX = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
 async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
   if (!MAILBOX.test(String(mailbox))) throw new Error(`Gmail-Einrichtung: Postfach ${String(mailbox).slice(0, 60)} ungültig`);
   assertNoSend(path); assertNoSend(mailbox);
-  if (!PFADE.has(path) || !['GET', 'POST'].includes(method)) throw new Error(`Gmail-Einrichtung: ${method} ${path} nicht erlaubt`);
+  const lesend = method === 'GET' && NUR_LESEN.has(path);
+  if (!lesend && (!PFADE.has(path) || !['GET', 'POST'].includes(method))) throw new Error(`Gmail-Einrichtung: ${method} ${path} nicht erlaubt`);
   if (!token) throw new Error('Gmail-Einrichtung: kein Zugangstoken');
   let res;
   try {
@@ -42,7 +48,8 @@ async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
   // Gmail antwortet auf settings/filters ohne Filter mit leerem Körper (gesehen 24.11.2026): das ist „keine Filter“.
   const roh = typeof res.text === 'function' ? await res.text().catch(() => null) : JSON.stringify(await res.json().catch(() => null));
   let j = null;
-  if (res.ok && method === 'GET' && path === 'settings/filters' && roh != null && roh.trim() === '') j = {};
+  // Leere Listen (Filter, Weiterleitungen, Delegierungen) kommen ebenso leer: auch „keine“.
+  if (res.ok && method === 'GET' && LISTEN.has(path) && roh != null && roh.trim() === '') j = {};
   else { try { j = JSON.parse(roh); } catch { j = null; } }
   if (!res.ok) throw new Error(`Gmail-Einrichtung ${method} ${path} in ${mailbox}: API ${res.status} ${String(j?.error?.message ?? '').slice(0, 160)}`);
   if (!j || typeof j !== 'object') throw new Error(`Gmail-Einrichtung ${method} ${path}: Antwort unvollständig`);
@@ -56,23 +63,49 @@ const norm = (c) => {
   return extra.length ? `eingeschränkt:${extra.join(',')}` : JSON.stringify({ query: String(c?.query ?? '').trim(), from: String(c?.from ?? '').trim().toLowerCase() });
 };
 
+/** Was von Label und Sicherheitsfiltern fehlt, aus gelesenen Labels und Filtern (auch für den Mail-Wächter). */
+export function missingSecurityParts({ labels, filters, label, mailbox = 'Postfach' }) {
+  const key = labelKey(label);
+  const treffer = (labels ?? []).filter((l) => labelKey(l?.name) === key);
+  if (treffer.length > 1) throw new Error(`Gmail-Einrichtung: ${mailbox} hat ${treffer.length} Labels namens ${label}; bitte von Hand bereinigen`);
+  const labelId = treffer[0]?.id ?? null;
+  const missing = [];
+  if (!labelId) missing.push({ name: 'label' });
+  for (const sf of SECURITY_FILTERS) {
+    const da = labelId && (filters ?? []).some((x) => norm(x?.criteria) === norm(sf.criteria) && (x?.action?.addLabelIds ?? []).includes(labelId));
+    if (!da) missing.push({ name: sf.name, criteria: sf.criteria });
+  }
+  return { labelId, missing };
+}
+
+/** Ist dieser Filter einer der Sicherheitsfilter (genau dieses Kriterium)? */
+export const isSecurityFilter = (f) => SECURITY_FILTERS.some((sf) => norm(f?.criteria) === norm(sf.criteria));
+
+/**
+ * Alle Einstellungen eines Postfachs, die Mails abfließen lassen oder Sicherheitsmails verstecken können: Labels,
+ * Filter, Weiterleitungsadressen, automatische Weiterleitung, IMAP, POP, Delegierungen. Nur GET; ein Lese-Scope
+ * (gmail.readonly) reicht für alle. Für den Mail-Wächter (S114).
+ */
+export async function readMailSettings({ token, mailbox, fetchImpl = fetch }) {
+  const get = (path) => call({ token, mailbox, path, fetchImpl });
+  const labels = (await get('labels')).labels ?? [];
+  const filters = (await get('settings/filters')).filter ?? [];
+  const forwardingAddresses = (await get('settings/forwardingAddresses')).forwardingAddresses ?? [];
+  const autoForwarding = await get('settings/autoForwarding');
+  const imap = await get('settings/imap');
+  const pop = await get('settings/pop');
+  const delegates = (await get('settings/delegates')).delegates ?? [];
+  return { labels, filters, forwardingAddresses, autoForwarding, imap, pop, delegates };
+}
+
 /**
  * Stand eines Postfachs: Label-ID (oder null) und was fehlt. Nur lesend.
  * @returns {Promise<{ mailbox, labelId: string|null, missing: Array<{ name, criteria? }>, before: { labels: number, filters: object[] } }>}
  */
 export async function planSecurityLabel({ labelsToken, filtersToken, mailbox, label, fetchImpl = fetch }) {
-  const key = labelKey(label);
   const labels = (await call({ token: labelsToken, mailbox, path: 'labels', fetchImpl })).labels ?? [];
-  const treffer = labels.filter((l) => labelKey(l?.name) === key);
-  if (treffer.length > 1) throw new Error(`Gmail-Einrichtung: ${mailbox} hat ${treffer.length} Labels namens ${label}; bitte von Hand bereinigen`);
-  const labelId = treffer[0]?.id ?? null;
   const filters = (await call({ token: filtersToken, mailbox, path: 'settings/filters', fetchImpl })).filter ?? [];
-  const missing = [];
-  if (!labelId) missing.push({ name: 'label' });
-  for (const sf of SECURITY_FILTERS) {
-    const da = labelId && filters.some((x) => norm(x?.criteria) === norm(sf.criteria) && (x?.action?.addLabelIds ?? []).includes(labelId));
-    if (!da) missing.push({ name: sf.name, criteria: sf.criteria });
-  }
+  const { labelId, missing } = missingSecurityParts({ labels, filters, label, mailbox });
   return { mailbox, labelId, missing, before: { labels: labels.length, filters: filters.map((x) => ({ id: x.id, criteria: x.criteria, action: x.action })) } };
 }
 

@@ -21,6 +21,7 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
 | `access-client/security-mail` | Merkmale von Sicherheitsmails (Betreffe, Absender): eine Liste für Gmail-Filter und Wächter (ab v1.3.0) |
 | `access-client/gmail-setup` | Sperr-Label und Filter je Postfach anlegen, nur Fehlendes, nie löschen (ab v1.3.0) |
+| `access-client/mail-guard` | Mail-Wächter: Filter, Weiterleitungen und Delegierungen gegen den gesicherten Stand, Gesendete mit unbekanntem Client, 2FA-Mails ohne Sperr-Label; nur lesend, dazu der Befehl `mail-guard` (ab v1.4.0) |
 | `access-client/mail` | `draftMail`: ein Mail-Entwurf über das delegierte Dienstkonto, auch als Antwort in einen Verlauf; der Kern von `access-mail` (ab v1.3.0) |
 | `access-client/read/google` | nur lesende Drive- und Sheets-Aufrufe mit übergebenem Token (nur GET auf feste Pfade), dieselben, die `access-read` nutzt; für Werkzeuge, die ihr Token selbst holen, z. B. OpenClaw-Lesewerkzeuge (ab v1.2.0) |
 
@@ -200,6 +201,50 @@ Vorher-Stand und die neuen IDs landen in `~/.local/state/access-client/security-
 zeigt sie für das Entfernen von Hand. Braucht in der Delegierung zusätzlich `gmail.labels` und `gmail.settings.basic`.
 Neues Postfach: `--mailbox <adresse>`.
 
+## Mail-Wächter: `mail-guard` (ab v1.4.0)
+
+Prüft je Postfach, was der Generalschlüssel (delegiertes Dienstkonto auf alle Postfächer) anrichten könnte und was die
+Filter für Sicherheitsmails übersehen (S114, Sascha 23.11.2026). Gedacht als nächtlicher Job im Container `mail-jobs`
+(Shopify `config/mail-jobs.json`); Gmail nur lesend (`gmail.readonly`), einziger Schreibweg ist die ntfy-Meldung.
+
+```
+mail-guard check   [--mailbox <adresse>]… [--key <datei>] [--label <name>] [--state-dir <ordner>] [--ntfy-env <VARIABLE>] [--days <n>] [--learn-days <n>] [--dry-run]
+mail-guard propose [--mailbox <adresse>]… [--key <datei>] [--label <name>] [--days <n>]
+mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <ordner>]
+```
+
+1. **Einstellungen** gegen den gesicherten Stand: Filter, Weiterleitungsadressen, automatische Weiterleitung,
+   Delegierungen, IMAP, POP (neu/entfernt, einmal gemeldet); dazu jede Nacht, ob Sperr-Label und beide
+   Sicherheitsfilter noch da sind. Der Zustand speichert nur Hashes und Kurztexte (Ziel-Domain), keine Kriterien.
+2. **Gesendete** mit unbekanntem Client-Fingerabdruck (User-Agent/X-Mailer ohne Version, Host der Message-ID, Form der
+   MIME-Grenze). Gmail kennzeichnet API-Versand nicht, und das Audit-Log ist mit `gmail.readonly` nicht lesbar; der
+   Aufbau der Mail unterscheidet Saschas Clients von einem Skript. Grenze: Nachgebaute Merkmale fallen nicht auf.
+   Unbekannte Abdrücke werden nie gelernt, jede solche Mail meldet; ein neuer eigener Client: `mail-guard accept`.
+3. **2FA, Codes, Passwort-Links ohne Sperr-Label:** `security-list` = Merkmal der Liste trifft, Filter griff nicht;
+   `security` = Kandidat (unbekannter Absender). Gelesen werden nur From und Subject (`format=metadata`), nie der Text.
+   Spam und Papierkorb nicht (dort wirken Filter nicht; Phishing mit Sicherheits-Betreff wäre jede Nacht ein Fehlalarm).
+
+- **Erster Lauf** je Postfach legt den Grundstand an (Einstellungen, Abdrücke der Gesendeten der letzten 60 Tage), meldet
+  nur Fehlendes beim Sperr-Label und 2FA-Mails der letzten 2 Tage, und listet im Log, was er übernimmt (`gelernt …`, ⚠ bei
+  Weiterleitungen, Delegierungen und einteiligen Mails ohne Client). Daran wird die Probe geprüft. Danach je Lauf das
+  Fenster seit dem letzten Lauf, in Zeitscheiben (Tag, bei mehr als 1000 Treffern bis zur Stunde halbiert).
+- **Meldung** (ntfy, URL aus `--ntfy-env`, Standard `MAIL_GUARD_NTFY_URL`): Postfach, Domain, Datum, Betreff gekürzt
+  (32 Zeichen, Ziffernfolgen ab 4 maskiert), höchstens 15 Zeilen; Priorität 4 bei Einstellungen, Gesendeten und
+  Filterlücken, 3 bei reinen 2FA-Kandidaten. Ohne Befund keine Meldung.
+- **Zustand** in `--state-dir` (Standard `~/.local/state/access-client/mail-guard/`), je Postfach eine Datei mit Rechten
+  600, gespeichert erst, wenn die Meldung angekommen ist.
+- **Merkmal-Liste ergänzen:** `propose --days 90` zeigt Kandidaten je Domain (Muster, maskierte Betreffe), schreibt
+  nichts. Die Liste wird per PR in `src/security-mail.js` erweitert, danach `scripts/security-label.mjs --apply` (nach
+  Freigabe); der Wächter ergänzt keine Filter.
+- **Nichts geht still verloren:** Das Prüffenster reicht immer bis zum letzten gespeicherten Lauf zurück (nicht gekappt).
+  Ein fehlendes Sperr-Label oder ein nicht lesbares Postfach steht als Befund in der Meldung, der Stand dieses Postfachs
+  bleibt. Mehr als 1000 Treffer in einer Stunde (Mail-Bombing) meldet er laut; der Rest dieser Stunde bleibt ungeprüft.
+  Reihenfolge der Meldung: Einstellungen, Einrichtung, Ausfälle (nie gekürzt), dann Gesendete, Filterlücken, Kandidaten;
+  das Log bekommt alle Zeilen.
+- **Grenzen:** nachgebaute Client-Merkmale; eine gesendete Mail, die selbst das Sperr-Label trägt (Kopie an sich selbst
+  mit Sicherheits-Betreff); Abwesenheitsnotiz und Absender-Einstellungen (`sendAs`, Reply-To) überwacht er nicht.
+- Exit: 0 ok · 1 Meldung nicht zugestellt oder Aufruf falsch (Zustand bleibt) · 3 ein Postfach nicht (vollständig) geprüft.
+
 ## Änderungen gegenüber der Herkunft
 
 - `gmail`: Sperr-Label und Text der Versand-Sperre kommen über `configureGmailGuard` vom Aufrufer (vorher feste
@@ -219,6 +264,7 @@ Neues Postfach: `--mailbox <adresse>`.
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.4.0) `mail-guard` (Modul und Befehl); `gmail-setup` liest zusätzlich Weiterleitungen, Delegierungen, IMAP und POP (`readMailSettings`, nur GET) und exportiert `missingSecurityParts`, `isSecurityFilter`.
 - neu (v1.3.0) `mailDelegation`, `access-mail`, `mail` (`draftMail`), `createCheckedDraft` mit `text` und `attachments`
   (`buildDraftMime`), `blockSecurityContent`, `security-mail`, `gmail-setup` mit `scripts/security-label.mjs`.
 - neu (v1.2.0) `read/google`: die Lese-Funktionen von `access-read` (`driveQuery`, `driveInfo`, `driveDownload`, `sheetTabs`, `sheetValues`, `idFrom`, `nameQuery`, `folderQuery`) als eigener Export.

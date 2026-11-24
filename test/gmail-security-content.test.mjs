@@ -45,7 +45,14 @@ function fake() {
 const A = { token: 'T', mailbox: 'hello@example.org' };
 
 test('eine Liste: Filter der Einrichtung und Wächter nutzen dieselben Betreffe und Absender', () => {
-  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 26);
+  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 35);
+  // Ergänzung S114 (Mail-Wächter, Board A782 a): Belege aus dem propose-Lauf 24.11.2026 (90 Tage, ohne Sperr-Label)
+  for (const s of ['verify your email', 'neues Passwort', 'new login', 'new device', 'multi-factor', 'two-step', 'Verifizieren Sie Ihre Identität',
+    'security alert', 'Sicherheitswarnung']) assert.ok(SECURITY_SUBJECTS.includes(s), s);
+  for (const subject of ['Verify your email for ElevenLabs', '[Billbee] Neues Passwort', 'New login to your ClickUp account', 'We noticed a new device logged in',
+    'Your multi-factor authentication was changed', 'New two-step authentication method added', 'Verifizieren Sie ihre Identität', 'Security alert: new passkey added',
+    'Sicherheitswarnung: Anmeldung mit neuem Gerät']) assert.ok(isSecurityMail({ from: 'x@y.example', subject }), subject);
+  assert.ok(SECURITY_FILTERS[0].criteria.query.length < 1400, 'Gmail-Filter bleibt unter der Längengrenze');
   assert.deepEqual(SECURITY_SENDERS, ['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com', 'appleid@id.apple.com', 'security@facebookmail.com']);
   assert.equal(SECURITY_FILTERS[0].criteria.query, `subject:(${SECURITY_SUBJECTS.map((s) => `"${s}"`).join(' OR ')})`);
   assert.equal(SECURITY_FILTERS[1].criteria.from, SECURITY_SENDERS.join(' OR '));

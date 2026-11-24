@@ -10,11 +10,16 @@
 // ihn wieder anlegen kann. Schreibend nur: DELETE settings/filters/<id> und (restore) POST settings/filters.
 import { assertNoSend } from './gmail.js';
 import { SECURITY_FILTERS } from './gmail-setup.js';
+import { SECURITY_SUBJECTS } from './security-mail.js';
 
 const USERS = 'https://gmail.googleapis.com/gmail/v1/users/';
 const MAILBOX = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 const FILTER_ID = /^[A-Za-z0-9_-]{1,200}$/;
-const ALTE_LISTE = /^subject:\("password reset" OR /;
+// Genau die Form der Listen-Filter: subject:("…" OR "…" …), nichts davor oder danach (Codex S137: ein Präfix allein ließe
+// fremde Filter durch). Jede Phrase muss ein bekanntes Merkmal sein: aktuelle Liste plus die früher entfernten.
+const LISTEN_FORM = /^subject:\("[^"]+"(?: OR "[^"]+")*\)$/;
+const FRUEHERE_PHRASEN = ['two-step']; // bis v1.5.0, S137 entfernt (traf „Two-step distillation“)
+const BEKANNT = new Set([...SECURITY_SUBJECTS, ...FRUEHERE_PHRASEN]);
 
 async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
   if (!MAILBOX.test(String(mailbox))) throw new Error(`Filter-Aufräumen: Postfach ${String(mailbox).slice(0, 60)} ungültig`);
@@ -41,13 +46,19 @@ async function call({ token, mailbox, path, method = 'GET', body, fetchImpl }) {
 const gleich = (a, b) => JSON.stringify({ c: a?.criteria ?? null, a: a?.action ?? null }) === JSON.stringify({ c: b?.criteria ?? null, a: b?.action ?? null });
 const aktuelleQueries = new Set(SECURITY_FILTERS.map((s) => s.criteria.query).filter(Boolean));
 
+/** Ist f ein alter Betreff-Sperrfilter (reine Phrasen-Liste aus bekannten Merkmalen, nur ein Label, nicht aktuell)? */
+export function isOldListFilter(f) {
+  const c = f?.criteria ?? {}; const a = f?.action ?? {};
+  if (!FILTER_ID.test(String(f?.id)) || Object.keys(c).length !== 1 || typeof c.query !== 'string' || !LISTEN_FORM.test(c.query)) return false;
+  if (aktuelleQueries.has(c.query)) return false;
+  const phrasen = [...c.query.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (phrasen[0] !== 'password reset' || !phrasen.every((p) => BEKANNT.has(p))) return false;
+  return Object.keys(a).length === 1 && Array.isArray(a.addLabelIds) && a.addLabelIds.length === 1;
+}
+
 /** Alte Betreff-Sperrfilter aus einem Postfach-Eintrag der Stand-Datei ({ mailbox, before: { filters } }). */
 export function oldFilterCandidates(eintrag) {
-  return (eintrag?.before?.filters ?? []).filter((f) => {
-    const c = f?.criteria ?? {}; const a = f?.action ?? {};
-    return FILTER_ID.test(String(f?.id)) && Object.keys(c).length === 1 && typeof c.query === 'string' && ALTE_LISTE.test(c.query)
-      && !aktuelleQueries.has(c.query) && Object.keys(a).length === 1 && Array.isArray(a.addLabelIds) && a.addLabelIds.length === 1;
-  }).map((f) => ({ id: f.id, criteria: f.criteria, action: f.action }));
+  return (eintrag?.before?.filters ?? []).filter(isOldListFilter).map((f) => ({ id: f.id, criteria: f.criteria, action: f.action }));
 }
 
 /** Nur lesend: was gelöscht würde (delete), was schon weg ist (gone), was sich geändert hat (changed, bleibt). */
@@ -68,13 +79,21 @@ export async function planFilterCleanup({ token, mailbox, candidates, fetchImpl 
   return out;
 }
 
-/** Löscht, was planFilterCleanup freigibt; onBackup(filter) vor, onDeleted(id) nach jedem DELETE. */
-export async function removeOldFilters({ token, mailbox, candidates, fetchImpl = fetch, onBackup = () => {}, onDeleted = () => {} }) {
-  for (const c of candidates) if (!FILTER_ID.test(String(c?.id))) throw new Error(`Filter-Aufräumen: ID „${String(c?.id).slice(0, 40)}“ ungültig`);
+/**
+ * Löscht, was planFilterCleanup freigibt. backup(liste) ist Pflicht und wird VOR dem ersten DELETE mit allen zu
+ * löschenden Filtern abgewartet (Codex S137: Sicherung je Schritt konnte bei einem Schreibfehler die schon gelöschten
+ * verlieren); onDeleted(id) nach jedem DELETE. Die Löschgrenze prüft jeden Kandidaten selbst (isOldListFilter).
+ */
+export async function removeOldFilters({ token, mailbox, candidates, fetchImpl = fetch, backup, onDeleted = () => {} }) {
+  for (const c of candidates) {
+    if (!FILTER_ID.test(String(c?.id))) throw new Error(`Filter-Aufräumen: ID „${String(c?.id).slice(0, 40)}“ ungültig`);
+    if (!isOldListFilter(c)) throw new Error(`Filter-Aufräumen: ${c.id} ist kein alter Betreff-Sperrfilter; nichts gelöscht`);
+  }
+  if (typeof backup !== 'function') throw new Error('Filter-Aufräumen: Sicherung fehlt; nichts gelöscht');
   const plan = await planFilterCleanup({ token, mailbox, candidates, fetchImpl });
+  if (plan.delete.length) await backup(plan.delete);
   const deleted = [];
   for (const f of plan.delete) {
-    onBackup(f);
     await call({ token, mailbox, path: `settings/filters/${f.id}`, method: 'DELETE', fetchImpl });
     deleted.push(f.id);
     onDeleted(f.id);

@@ -17,7 +17,7 @@
 // Zugang: Schlüssel aus mailDelegation.key unter ~/.config/gsheets (GOOGLE_CONFIG_DIR), Scopes gmail.labels und
 // gmail.settings.basic. Sicherung: Vor jedem Live-Lauf schreibt das Skript den Vorher-Stand (Filter je Postfach) und
 // nach jedem Anlegen die neuen IDs nach ~/.local/state/access-client/security-label-<zeit>.json (Rechte 600).
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configDir, getDelegatedToken } from '../src/google-auth.js';
@@ -47,11 +47,15 @@ if (opt['remove-old'] || opt.restore) {
   const dir = join(homedir(), '.local', 'state', 'access-client');
   const sicherung = join(dir, `security-label-removed-${zeit}.json`);
   const gesichert = { zeit, quelle: opt['remove-old'] ?? null, postfaecher: [] };
-  const sichere = () => { mkdirSync(dir, { recursive: true }); writeFileSync(sicherung, `${JSON.stringify(gesichert, null, 2)}\n`, { mode: 0o600 }); };
+  // atomar ersetzen (Codex S137): erst Temp-Datei vollständig schreiben, dann umbenennen; die alte Sicherung bleibt bis dahin heil
+  const sichere = () => { mkdirSync(dir, { recursive: true }); const tmp = `${sicherung}.tmp`; writeFileSync(tmp, `${JSON.stringify(gesichert, null, 2)}\n`, { mode: 0o600 }); renameSync(tmp, sicherung); };
+  // --mailbox begrenzt auch hier (Codex S137: eine auf ein Postfach begrenzte Freigabe darf nicht alle treffen)
+  const auswahl = opt.mailbox?.length ? new Set(opt.mailbox.map((w) => resolveMailbox(config, w).email)) : null;
   let fehler = 0;
   for (const p of quelle.postfaecher ?? []) {
     try {
       const mb = resolveMailbox(config, p.mailbox);
+      if (auswahl && !auswahl.has(mb.email)) continue;
       const token = await getDelegatedToken({ datei, sub: mb.email, scopes: [GMAIL_SETTINGS_BASIC], allowedScopes: [GMAIL_SETTINGS_BASIC] });
       if (opt.restore) {
         const r = await restoreFilters({ token, mailbox: mb.email, filters: p.filters ?? [], dryRun: !opt.apply });
@@ -65,9 +69,8 @@ if (opt['remove-old'] || opt.restore) {
         console.log(`${mb.email}: ${plan.blocked ? `GESPERRT: ${plan.blocked}` : `würde löschen ${plan.delete.map(zeile).join(', ') || '–'}`}${plan.gone.length ? `; schon weg ${plan.gone.join(', ')}` : ''}${plan.changed.length ? `; geändert, bleibt ${plan.changed.join(', ')}` : ''}`);
         continue;
       }
-      gesichert.postfaecher.push({ mailbox: mb.email, filters: [] });
       const r = await removeOldFilters({ token, mailbox: mb.email, candidates,
-        onBackup: (f) => { gesichert.postfaecher.at(-1).filters.push(f); sichere(); } });
+        backup: async (liste) => { gesichert.postfaecher.push({ mailbox: mb.email, filters: liste }); sichere(); } });
       if (r.blocked) { fehler++; console.error(`${mb.email}: GESPERRT ${r.blocked}`); continue; }
       console.log(`${mb.email}: gelöscht ${r.deleted.join(', ') || '–'}${r.gone.length ? `; schon weg ${r.gone.join(', ')}` : ''}${r.changed.length ? `; geändert, bleibt ${r.changed.join(', ')}` : ''}`);
     } catch (e) { fehler++; console.error(`${p.mailbox}: FEHLER ${String(e.message).slice(0, 300)}`); }

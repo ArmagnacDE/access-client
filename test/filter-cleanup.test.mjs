@@ -58,7 +58,7 @@ test('Löschen: jede ID erst gesichert, dann DELETE genau auf settings/filters/<
   const f = gmail([...ALT, ...NEU, ...FREMD]);
   const gesichert = [];
   const r = await removeOldFilters({ token: 'T', mailbox: BOX, candidates: oldFilterCandidates(STAND.postfaecher[0]), fetchImpl: f,
-    onBackup: (x) => gesichert.push(x.id), onDeleted: (id) => assert.ok(gesichert.includes(id), 'vor dem Löschen gesichert') });
+    backup: async (liste) => gesichert.push(...liste.map((x) => x.id)), onDeleted: (id) => assert.ok(gesichert.includes(id), 'vor dem Löschen gesichert') });
   assert.deepEqual(r.deleted, ['A1', 'A2']);
   assert.deepEqual(f.st.filters.map((x) => x.id).sort(), [...NEU.map((x) => x.id), 'X1', 'X2'].sort());
   assert.deepEqual(f.log.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.p}`), ['DELETE settings/filters/A1', 'DELETE settings/filters/A2']);
@@ -75,6 +75,26 @@ test('Restore: legt gesicherte Filter mit Kriterium und Aktion wieder an, doppel
 
 test('ungültige IDs und fremde Pfade werden nie gelöscht', async () => {
   const f = gmail([...ALT, ...NEU]);
-  await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: [{ ...ALT[0], id: '../send' }], fetchImpl: f }), /ID/);
+  await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: [{ ...ALT[0], id: '../send' }], fetchImpl: f, backup: async () => {} }), /ID/);
   assert.ok(f.log.every((c) => c.method === 'GET'));
+});
+
+test('Codex: Präfix allein reicht nicht – nur reine Phrasen-Listen aus bekannten Merkmalen', () => {
+  const fremd = [
+    { id: 'Z1', criteria: { query: 'subject:("password reset" OR "special internal alert") OR from:alerts@example.org' }, action: { addLabelIds: [L] } },
+    { id: 'Z2', criteria: { query: 'subject:("password reset" OR "special internal alert")' }, action: { addLabelIds: [L] } },
+    { id: 'Z3', criteria: { query: 'subject:("password reset" OR "Ihr Code lautet") -from:x' }, action: { addLabelIds: [L] } },
+  ];
+  assert.deepEqual(oldFilterCandidates({ before: { filters: [...fremd, ...ALT] } }).map((x) => x.id), ['A1', 'A2']);
+});
+
+test('Codex: alle Löschungen eines Postfachs vor dem ersten DELETE gesichert (await), Löschgrenze prüft Kandidaten selbst', async () => {
+  const f = gmail([...ALT, ...NEU]);
+  const reihenfolge = [];
+  const orig = f; const g = async (u, i = {}) => { if ((i.method ?? 'GET') === 'DELETE') reihenfolge.push('delete'); return orig(u, i); };
+  await removeOldFilters({ token: 'T', mailbox: BOX, candidates: oldFilterCandidates(STAND.postfaecher[0]), fetchImpl: g,
+    backup: async (liste) => { await new Promise((r) => setTimeout(r, 5)); reihenfolge.push(`backup:${liste.length}`); } });
+  assert.deepEqual(reihenfolge, ['backup:2', 'delete', 'delete']);
+  await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: [NEU[0]], fetchImpl: gmail([...NEU]), backup: async () => {} }), /kein alter Betreff-Sperrfilter/);
+  await assert.rejects(removeOldFilters({ token: 'T', mailbox: BOX, candidates: ALT, fetchImpl: gmail([...ALT, ...NEU]) }), /Sicherung/);
 });

@@ -1,8 +1,8 @@
 {
   "name": "access-client",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
-  "description": "Google- und 1Password-Zugänge ohne Fremd-Abhängigkeiten: Anmeldung, Gmail mit Wächter (nie senden), Drive, Sheets, 1Password-Tresore und -Tokens; dazu der nur lesende Befehl access-read.",
+  "description": "Google- und 1Password-Zugänge ohne Fremd-Abhängigkeiten: Anmeldung, Gmail mit Wächter (nie senden), Drive, Sheets, 1Password-Tresore und -Tokens; dazu der nur lesende Befehl access-read und der Entwurfs-Befehl access-mail (nie senden).",
   "type": "module",
   "exports": {
     "./google-auth": "./src/google-auth.js",
@@ -14,10 +14,12 @@
     "./op-read": "./src/op-read.js",
     "./read": "./src/read/cli.js",
     "./read/google": "./src/read/google-read.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./mail": "./src/mail/cli.js"
   },
   "bin": {
-    "access-read": "bin/access-read.mjs"
+    "access-read": "bin/access-read.mjs",
+    "access-mail": "bin/access-mail.mjs"
   },
   "files": [
     "src/",

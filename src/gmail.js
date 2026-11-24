@@ -2,6 +2,7 @@
 // Lesen nur über feste GET-Pfade; Sicherheitsmails (ein konfiguriertes Label, siehe configureGmailGuard) gesperrt.
 // Keine Fremd-Abhängigkeiten (Node ≥ 22, natives fetch).
 
+import { randomBytes } from 'node:crypto';
 import { getAccessToken } from './google-auth.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -144,6 +145,47 @@ export function buildMime(to, subject, htmlBody, cc, reply = null) {
   return headers.join('\r\n') + '\r\n\r\n' + body64;
 }
 
+const b64Lines = (buf) => Buffer.from(buf).toString('base64').replace(/(.{76})/g, '$1\r\n');
+// RFC 2231: Dateiname als UTF-8 mit Prozent-Kodierung (auch ' ( ) *), dazu eine ASCII-Fassung für alte Programme.
+const rfc2231 = (n) => encodeURIComponent(n).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+const asciiName = (n) => n.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+/** Höchstens so viele Bytes Anhänge je Entwurf (Gmail nimmt bis 25 MB je Mail, base64 macht ein Drittel mehr). */
+export const DRAFT_ATTACH_MAX = 15 * 1024 * 1024;
+
+/**
+ * MIME eines Entwurfs: Text (text/plain) oder HTML, optional Anhänge (multipart/mixed). `attachments`:
+ * [{ filename, mime, bytes }]. Kopfzeilen wie buildMime (To, Cc, In-Reply-To/References, Subject).
+ */
+export function buildDraftMime({ to, cc, subject, html = null, text = null, attachments = [], reply = null }) {
+  if ((html == null) === (text == null)) throw new Error('Gmail-Entwurf: genau eins von html oder text');
+  const ccList = normalizeCc(cc);
+  const headers = [`To: ${to}`];
+  if (ccList.length) headers.push(`Cc: ${ccList.join(', ')}`);
+  const irt = msgIdList(reply?.inReplyTo).split(' ').at(-1);
+  if (irt) headers.push(`In-Reply-To: ${irt}`);
+  const refs = msgIdList(reply?.references);
+  if (refs) headers.push(`References: ${refs}`);
+  headers.push(`Subject: ${encodeHeader(subject)}`, 'MIME-Version: 1.0');
+  const bodyType = `Content-Type: text/${html != null ? 'html' : 'plain'}; charset="UTF-8"`;
+  const body = b64Lines(Buffer.from(html ?? text, 'utf8'));
+  if (!attachments.length) return [...headers, bodyType, 'Content-Transfer-Encoding: base64'].join('\r\n') + '\r\n\r\n' + body;
+  let summe = 0;
+  for (const a of attachments) {
+    if (!a || typeof a.filename !== 'string' || !a.filename || /[\r\n\0/\\]/.test(a.filename) || !Buffer.isBuffer(a.bytes)) throw new Error('Gmail-Entwurf: Anhang ungültig (Dateiname, Bytes)');
+    if (!/^[a-z]+\/[a-z0-9.+-]+$/i.test(String(a.mime ?? ''))) throw new Error('Gmail-Entwurf: Anhang ohne gültigen MIME-Typ');
+    summe += a.bytes.length;
+  }
+  if (summe > DRAFT_ATTACH_MAX) throw new Error(`Gmail-Entwurf: Anhänge zusammen über ${DRAFT_ATTACH_MAX / 1024 / 1024} MB; nichts angelegt`);
+  const grenze = `dg-${randomBytes(12).toString('hex')}`;
+  const teile = [
+    `--${grenze}\r\n${bodyType}\r\nContent-Transfer-Encoding: base64\r\n\r\n${body}`,
+    ...attachments.map((a) => `--${grenze}\r\nContent-Type: ${a.mime}; name="${asciiName(a.filename)}"\r\n`
+      + `Content-Disposition: attachment; filename="${asciiName(a.filename)}"; filename*=UTF-8''${rfc2231(a.filename)}\r\n`
+      + `Content-Transfer-Encoding: base64\r\n\r\n${b64Lines(a.bytes)}`),
+  ];
+  return [...headers, `Content-Type: multipart/mixed; boundary="${grenze}"`].join('\r\n') + '\r\n\r\n' + teile.join('\r\n') + `\r\n--${grenze}--\r\n`;
+}
+
 // base64url of the full raw MIME message
 function toRaw(mime) {
   return Buffer.from(mime, 'utf8').toString('base64')
@@ -169,10 +211,10 @@ export async function createDraft(to, subject, htmlBody, cc, { token, fetchImpl 
  * zweiter Versuch ergäbe dann zwei Entwürfe. Der Fehler sagt das, der Aufrufer prüft im Postfach statt zu wiederholen.
  * @returns {Promise<{ draftId: string, messageId: string|null, threadId: string|null, mailbox: string }>}
  */
-export async function createCheckedDraft({ token, expectedMailbox, to, subject, html, cc, reply = null, fetchImpl = fetch }) {
+export async function createCheckedDraft({ token, expectedMailbox, to, subject, html, text, attachments = [], cc, reply = null, fetchImpl = fetch }) {
   const want = String(expectedMailbox ?? '').trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(want)) throw new Error('Gmail-Entwurf: expectedMailbox (volle Adresse des Postfachs) fehlt');
-  if (!to || !subject || typeof html !== 'string') throw new Error('Gmail-Entwurf: to, subject und html sind Pflicht');
+  if (!to || !subject || (typeof html === 'string') === (typeof text === 'string')) throw new Error('Gmail-Entwurf: to, subject und genau eins von html oder text sind Pflicht');
   // Kein Zeilenumbruch in Kopfzeilen: sonst entstünden fremde Kopfzeilen im Entwurf (z. B. ein Bcc aus dem Betreff).
   for (const [feld, wert] of [['to', to], ['subject', subject], ...normalizeCc(cc).map((c) => ['cc', c])]) {
     if (/[\r\n]/.test(String(wert))) throw new Error(`Gmail-Entwurf: Zeilenumbruch in ${feld}; nichts angelegt`);
@@ -180,7 +222,10 @@ export async function createCheckedDraft({ token, expectedMailbox, to, subject, 
   const profil = await getProfile({ token, mailbox: want, fetchImpl });
   const ist = String(profil?.emailAddress ?? '').toLowerCase();
   if (ist !== want) throw new Error(`Gmail-Entwurf: Token gehört zu ${ist || 'unbekannt'}, erwartet ${want}; nichts angelegt`);
-  const raw = toRaw(buildMime(to, subject, html, cc, reply));
+  // Ohne Text und Anhänge bleibt die MIME wie bisher (buildMime), damit bestehende Aufrufer gleiche Entwürfe bekommen.
+  const raw = toRaw(typeof text === 'string' || attachments.length
+    ? buildDraftMime({ to, cc, subject, html: typeof html === 'string' ? html : null, text: typeof text === 'string' ? text : null, attachments, reply })
+    : buildMime(to, subject, html, cc, reply));
   let res;
   try {
     res = await gmailPost({ token, mailbox: want, path: 'drafts', body: { message: { raw, ...(reply?.threadId ? { threadId: String(reply.threadId) } : {}) } }, fetchImpl });

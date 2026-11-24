@@ -9,7 +9,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   configureGmailGuard, getMessage, getProfile, gmailGet, headerOf, listMessageIds, messageText, PART_MAX,
 } from '../gmail.js';
-import { AccessReadError, loadConfig, readToken, resolveAccount } from './accounts.js';
+import { AccessReadError, loadConfig, readToken, resolveAccount, resolveMailbox } from './accounts.js';
 import {
   driveDownload, driveInfo, driveQuery, driveWhoami, folderQuery, idFrom, nameQuery, sheetTabs, sheetValues,
 } from './google-read.js';
@@ -31,11 +31,12 @@ export const USAGE = `access-read: nur lesender Zugang zu Gmail, Drive und Sheet
   access-read sheets [--as <konto>] tabs <sheet-id|url>
   access-read sheets [--as <konto>] get <sheet-id|url> <bereich> [--unformatted]
 
-<konto>: Name oder Adresse aus der Konfiguration (access-read accounts). Ohne --as lesen drive/sheets das Dateikonto.
+<konto>: Name oder Adresse aus der Konfiguration (access-read accounts); mit Mail-Delegierung für mail jedes Postfach der
+Domain (Adresse oder Kurzname wie „hello“). Ohne --as lesen drive/sheets das Dateikonto. Entwürfe: access-mail help.
 Sicherheitsmails (konfiguriertes Sperr-Label) bleiben gesperrt. Kein Senden, keine Entwürfe, kein Schreiben.`;
 
 /** Argumente in Positionen und --optionen trennen. Wert-Optionen brauchen einen Wert. */
-export function parseArgs(argv, { values = [], flags = [] } = {}) {
+export function parseArgs(argv, { values = [], flags = [], multi = [] } = {}) {
   const pos = [];
   const opt = {};
   for (let i = 0; i < argv.length; i++) {
@@ -44,9 +45,11 @@ export function parseArgs(argv, { values = [], flags = [] } = {}) {
     if (a.startsWith('--')) {
       const [k, inline] = a.slice(2).split(/=(.*)/s, 2);
       if (flags.includes(k)) { if (inline !== undefined) throw new AccessReadError(`--${k} hat keinen Wert`, { usage: true }); opt[k] = true; continue; }
-      if (!values.includes(k)) throw new AccessReadError(`Option --${k.slice(0, 30)} unbekannt`, { usage: true });
+      if (!values.includes(k) && !multi.includes(k)) throw new AccessReadError(`Option --${k.slice(0, 30)} unbekannt`, { usage: true });
       const v = inline !== undefined ? inline : argv[++i];
       if (v === undefined) throw new AccessReadError(`--${k} braucht einen Wert`, { usage: true });
+      if (multi.includes(k)) { (opt[k] ??= []).push(String(v)); continue; }
+      if (opt[k] !== undefined) throw new AccessReadError(`--${k} doppelt`, { usage: true });
       opt[k] = String(v);
       continue;
     }
@@ -177,7 +180,7 @@ function mailFull(m, maxChars, withHtml) {
 async function cmdMail(pos, opt, config, deps) {
   const [wer, sub, ...rest] = pos;
   if (!wer || !sub) throw new AccessReadError('mail <konto> <search|show|thread|attachment> …', { usage: true });
-  const account = resolveAccount(config, wer);
+  const account = resolveMailbox(config, wer);
   const f = deps.fetchImpl;
   if (sub === 'search') {
     const q = rest.join(' ').trim();
@@ -186,8 +189,15 @@ async function cmdMail(pos, opt, config, deps) {
     const token = await gmailFor(account, deps);
     const { ids, truncated } = await listMessageIds({ token, mailbox: account.email, q, max, fetchImpl: f });
     const mails = [];
-    for (const { id } of ids) mails.push(mailSummary(await getMessage({ token, mailbox: account.email, id, format: 'metadata', fetchImpl: f })));
-    return { konto: account.email, suche: q, anzahl: mails.length, weitere: truncated, mails };
+    let ausgeblendet = 0;
+    for (const { id } of ids) {
+      // Trifft die Merkmal-Sperre einen Treffer, den die Suche nicht ausschloss: ausblenden und zählen (reviewer S112 B1)
+      try { mails.push(mailSummary(await getMessage({ token, mailbox: account.email, id, format: 'metadata', fetchImpl: f }))); } catch (e) {
+        if (!e?.blocked) throw e;
+        ausgeblendet++;
+      }
+    }
+    return { konto: account.email, suche: q, anzahl: mails.length, weitere: truncated, ...(ausgeblendet ? { ausgeblendet } : {}), mails };
   }
   if (sub === 'show') {
     const [id] = rest;
@@ -276,20 +286,27 @@ async function cmdSheets(pos, opt, config, deps) {
 async function cmdAccounts(opt, config, deps) {
   const konten = [];
   for (const a of Object.values(config.accounts)) {
-    const k = { name: a.name, email: a.email, zugang: a.kind, datei: a.file, dateikonto: (config.filesAccount ?? null) === a.name };
+    const mb = (() => { try { return resolveMailbox(config, a.email); } catch { return null; } })();
+    const k = { name: a.name, email: a.email, zugang: a.kind, datei: a.file, mail: mb ? `${mb.kind}${mb.file ? ` (${mb.file})` : ''}` : 'kein Zugang', dateikonto: (config.filesAccount ?? null) === a.name };
     if (opt.check) {
       const gmailPruefung = async () => {
-        const token = await gmailFor(a, deps);
+        if (!mb) throw new AccessReadError('kein Mail-Zugang');
+        const token = await gmailFor(mb, deps);
         // prüft auch, dass das Sperr-Label im Postfach existiert (requireLabel)
         await gmailGet({ token, mailbox: a.email, path: 'messages', params: { q: 'in:inbox', maxResults: 1 }, fetchImpl: deps.fetchImpl });
       };
-      for (const [dienst, fn] of [['gmail', gmailPruefung], ['drive', () => filesFor(a, 'drive', deps)]]) {
+      const pruefungen = [['gmail', gmailPruefung], ...(a.kind === 'mail-only' ? [] : [['drive', () => filesFor(a, 'drive', deps)]])];
+      for (const [dienst, fn] of pruefungen) {
         try { await fn(); k[dienst] = 'ok'; } catch (e) { k[dienst] = redact(String(e.message)).slice(0, 200); }
       }
     }
     konten.push(k);
   }
-  return { konfiguration: config.source, sperrLabel: config.gmailBlockedLabel, konten };
+  return {
+    konfiguration: config.source, sperrLabel: config.gmailBlockedLabel,
+    mailDelegierung: config.mailDelegation ? { schluessel: config.mailDelegation.key, domains: config.mailDelegation.domains, hinweis: 'jedes echte Postfach dieser Domains; Entwürfe mit access-mail' } : null,
+    konten,
+  };
 }
 
 /**
@@ -306,7 +323,7 @@ export async function run(argv, deps = {}) {
     const [cmd, ...rest] = pos;
     if (!cmd || cmd === 'help' || opt.help) { out.write(`${USAGE}\n`); return cmd || opt.help ? 0 : 2; }
     const config = loadConfig({ env: d.env });
-    configureGmailGuard({ blockedLabel: config.gmailBlockedLabel, requireLabel: true });
+    configureGmailGuard({ blockedLabel: config.gmailBlockedLabel, requireLabel: true, blockSecurityContent: true });
     let r;
     if (cmd === 'accounts') r = await cmdAccounts(opt, config, d);
     else if (cmd === 'mail') r = await cmdMail(rest, opt, config, d);

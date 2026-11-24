@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# access-read für Sessions auf der VM installieren: genau ein Tag, schreibgeschützt, ein fester Befehlsname.
+# access-read und access-mail für Sessions installieren: genau ein Tag, schreibgeschützt, feste Befehlsnamen.
 #   scripts/install-cli.sh v1.0.0
 # Legt ~/.local/share/access-client/<tag>/ aus dem Tag an (git archive, nur src/, bin/, package.json, README.md),
-# nimmt allen das Schreibrecht und zeigt ~/.local/bin/access-read darauf. Die Freigaberegel für Sessions nennt nur
-# diesen Befehlsnamen; was er ausführt, ist damit immer ein getaggter, geprüfter Stand, nie ein Arbeitsverzeichnis.
+# nimmt allen das Schreibrecht und zeigt ~/.local/bin/access-read (und ab v1.3.0 ~/.local/bin/access-mail) darauf. Die
+# Freigaberegel für Sessions nennt nur diese Befehlsnamen; was er ausführt, ist damit immer ein getaggter, geprüfter Stand, nie ein Arbeitsverzeichnis.
 set -euo pipefail
 TAG=${1:-}
 [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Aufruf: $0 v<major>.<minor>.<patch>" >&2; exit 2; }
@@ -23,5 +23,9 @@ else
   chmod u+w "$TMP"; mv "$TMP" "$DEST"; chmod a-w "$DEST"
 fi
 mkdir -p "$HOME/.local/bin"
-ln -sfn "$DEST/bin/access-read.mjs" "$HOME/.local/bin/access-read"
-echo "access-read → $DEST ($(git -C "$REPO" rev-parse --short "$TAG^{commit}"))"
+for cmd in access-read access-mail; do
+  # access-mail gibt es erst ab v1.3.0; ältere Tags setzen nur access-read
+  [ -f "$DEST/bin/$cmd.mjs" ] || continue
+  ln -sfn "$DEST/bin/$cmd.mjs" "$HOME/.local/bin/$cmd"
+  echo "$cmd → $DEST ($(git -C "$REPO" rev-parse --short "$TAG^{commit}"))"
+done

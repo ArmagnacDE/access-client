@@ -21,7 +21,7 @@ import {
 configureGmailGuard({ blockedLabel: 'agent-no-read', sendBlockedReason: 'Versand nur durch Test-Inhaber (nur Entwürfe)' });
 
 const ROOT = resolve(import.meta.dirname, '..');
-const DIRS = ['src', 'bin'];
+const DIRS = ['src', 'bin', 'scripts'];
 const EXT = /\.(js|mjs|cjs|sh)$/;
 
 // Muster, die Versand bedeuten. In Kommentaren nur erlaubt, wenn der Kommentar sie verbietet (NEGATION).
@@ -46,6 +46,7 @@ const SEND_ALLOW = [
 const DIRECT_GMAIL = /gmail\.googleapis\.com|www\.googleapis\.com\/gmail/i;
 const DIRECT_ALLOW = {
   'src/gmail.js': 'die Hülle selbst',
+  'src/gmail-setup.js': 'Einrichtung Sperr-Label (S112, A694 a): nur GET/POST auf labels und settings/filters, über assertNoSend; test/gmail-setup.test.mjs',
 };
 
 function* files(dir) {

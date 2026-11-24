@@ -8,11 +8,16 @@
 // BEWUSST NICHT UMGESETZT (Cross-Review S112, Codex #1): Die Liste deckt nicht jede Sicherheitsmail ab (z. B. Betreff
 // „Your authentication code“ von einem anderen Absender). Sie ist absichtlich genau die der Gmail-Filter (eine Quelle,
 // Filter stehen seit 24.11. in allen Postfächern); erweitert wird sie mit Sascha, dann Filter neu (security-label.mjs).
+// Lücken findet seit S114 der Mail-Wächter (src/mail-guard.js, `mail-guard propose`).
 
 export const SECURITY_SUBJECTS = Object.freeze(['password reset', 'reset your password', 'Passwort zurücksetzen', 'Passwort vergessen',
   'verification code', 'Bestätigungscode', 'Verifizierungscode', 'security code', 'Sicherheitscode', 'login code', 'Anmeldecode',
   'sign-in code', 'one-time code', 'one-time password', 'Einmalcode', 'Einmalpasswort', '2FA', 'two-factor', 'Zwei-Faktor',
-  'magic link', 'Anmeldelink', 'login link', 'new sign-in', 'your code is', 'Dein Code lautet', 'Ihr Code lautet']);
+  'magic link', 'Anmeldelink', 'login link', 'new sign-in',
+  // Ergänzung S114 (Mail-Wächter, Board A782 a), Belege aus dem propose-Lauf 24.11.2026 über 90 Tage
+  'verify your email', 'neues Passwort', 'new login', 'new device', 'multi-factor', 'two-step', 'Verifizieren Sie Ihre Identität',
+  'security alert', 'Sicherheitswarnung',
+  'your code is', 'Dein Code lautet', 'Ihr Code lautet']);
 /** Nur Absender, die ausschließlich Sicherheitsmails schicken (GitHub, Shopify u. ä. fängt der Betreff). */
 export const SECURITY_SENDERS = Object.freeze(['accounts.google.com', 'account-security-noreply@accountprotection.microsoft.com',
   'appleid@id.apple.com', 'security@facebookmail.com']);

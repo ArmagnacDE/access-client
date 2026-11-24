@@ -45,7 +45,7 @@ function fake() {
 const A = { token: 'T', mailbox: 'hello@example.org' };
 
 test('eine Liste: Filter der Einrichtung und Wächter nutzen dieselben Betreffe und Absender', () => {
-  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 35);
+  assert.ok(SECURITY_SUBJECTS.includes('Dein Code lautet') && SECURITY_SUBJECTS.length === 63);
   // Ergänzung S114 (Mail-Wächter, Board A782 a): Belege aus dem propose-Lauf 24.11.2026 (90 Tage, ohne Sperr-Label)
   for (const s of ['verify your email', 'neues Passwort', 'new login', 'new device', 'multi-factor', 'two-step', 'Verifizieren Sie Ihre Identität',
     'security alert', 'Sicherheitswarnung']) assert.ok(SECURITY_SUBJECTS.includes(s), s);

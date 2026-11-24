@@ -137,7 +137,8 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   }
   for (const w of snap.forwardingAddresses ?? []) {
     const d = domainOf(w?.forwardingEmail);
-    put(`forward:${sha(`${String(w?.forwardingEmail).toLowerCase()}|${w?.verificationStatus}`)}`, `Weiterleitungsadresse @${d} (${w?.verificationStatus ?? '?'})`, d);
+    // Schlüssel nur die Adresse (S123, Board A793 a): ein Statuswechsel einer bekannten Adresse ist kein Befund
+    put(`forward:${sha(String(w?.forwardingEmail).toLowerCase())}`, `Weiterleitungsadresse @${d} (${w?.verificationStatus ?? '?'})`, d);
   }
   const af = snap.autoForwarding ?? {};
   if (af.enabled) {
@@ -157,11 +158,16 @@ export function settingsItems(snap, { label = gmailGuardConfig()?.blockedLabel }
   return out;
 }
 
-/** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides). */
+// Weiterleitungen melden nur, was Mails nach außen bringen kann (S123, Board A789 b, A793 a: mail@ hat Lexware
+// „accepted“ und invoicefetcher „pending“, automatische Weiterleitung aus): eine neue Adresse und eine eingeschaltete
+// oder umgestellte automatische Weiterleitung. Still bleiben Entfernen, Ausschalten und Statuswechsel einer bekannten
+// Adresse; eine bestätigte Adresse leitet erst mit Weiterleitung oder Filter weiter, und beide melden sich selbst.
+const STILL_ENTFERNT = /^(forward|autoForwarding):/;
+/** Unterschiede zweier settingsItems: neu, entfernt (eine Änderung erscheint als beides), ohne die stillen Fälle. */
 export function diffSettings(alt, neu) {
   const out = [];
-  for (const [key, v] of Object.entries(neu ?? {})) if (!(key in (alt ?? {}))) out.push({ change: 'neu', key, ...v });
-  for (const [key, v] of Object.entries(alt ?? {})) if (!(key in (neu ?? {}))) out.push({ change: 'entfernt', key, ...v });
+  for (const [key, v] of Object.entries(neu ?? {})) if (!(key in (alt ?? {})) && key !== 'autoForwarding:aus') out.push({ change: 'neu', key, ...v });
+  for (const [key, v] of Object.entries(alt ?? {})) if (!(key in (neu ?? {})) && !STILL_ENTFERNT.test(key)) out.push({ change: 'entfernt', key, ...v });
   return out;
 }
 

@@ -78,6 +78,13 @@ const b64url = (x) => Buffer.from(x).toString('base64url');
 // Antworten des Token-Endpunkts: nie Parser- oder Rohtext in eine Meldung (er könnte ein Token-Fragment enthalten),
 // und ein Access-Token muss wie eines aussehen (keine Steuerzeichen, die später in einem Header landen).
 const ACCESS_TOKEN_RE = /^[\x21-\x7e]{1,4096}$/;
+/** Grund eines Netzfehlers für die Meldung. Google-Endpunkte werden ohne Weiterleitung abgefragt (redirect: 'error',
+ *  S123 „Mail-Weg Nacharbeiten“): ein Umleiten (Proxy, Captive Portal, falsche token_uri) erschien bisher nur als
+ *  „TypeError“; jetzt steht da, was passiert ist. */
+export function netzGrund(e) {
+  if (/redirect/i.test(String(e?.cause?.message ?? e?.message ?? ''))) return 'leitet weiter (Redirect), abgebrochen; Netz oder Proxy prüfen';
+  return `nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`;
+}
 async function tokenJson(res, was) {
   let json;
   try { json = await res.json(); } catch { throw new Error(`${was}: Antwort ist kein gültiges JSON (HTTP ${res.status})`); }
@@ -95,8 +102,8 @@ export async function grantedScopesOf(json, fetchImpl = fetch) {
   if (typeof json?.scope === 'string' && json.scope.trim()) return json.scope.trim();
   let res;
   try {
-    res = await fetchImpl('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', body: new URLSearchParams({ access_token: json.access_token }), signal: AbortSignal.timeout(20_000) });
-  } catch (e) { throw new Error(`tokeninfo nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
+    res = await fetchImpl('https://oauth2.googleapis.com/tokeninfo', { method: 'POST', body: new URLSearchParams({ access_token: json.access_token }), redirect: 'error', signal: AbortSignal.timeout(20_000) });
+  } catch (e) { throw new Error(`tokeninfo ${netzGrund(e)}`); }
   let info = null;
   try { info = await res.json(); } catch { /* unten */ }
   if (!res.ok || typeof info?.scope !== 'string' || !info.scope.trim()) throw new Error('Google meldet keine Scopes für das Token; Rechte nicht prüfbar');
@@ -136,8 +143,8 @@ async function serviceAccountToken(datei, opts, fetchImpl = fetch) {
   try {
     // Fester Endpunkt: token_uri aus der Schlüsseldatei zählt nicht (eine veränderte Datei lenkte sonst die signierte
     // Assertion um; S112, wie OpenClaw gmail.js seit S5).
-    res = await fetchImpl(TOKEN_URL, { method: 'POST', body, signal: AbortSignal.timeout(20_000) });
-  } catch (e) { throw new Error(`Google-Dienstkonto-Anmeldung: Token-Endpunkt nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
+    res = await fetchImpl(TOKEN_URL, { method: 'POST', body, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+  } catch (e) { throw new Error(`Google-Dienstkonto-Anmeldung: Token-Endpunkt ${netzGrund(e)}`); }
   const json = await tokenJson(res, 'Google-Dienstkonto-Anmeldung');
   if (!res.ok) throw new Error(`Google-Dienstkonto-Anmeldung fehlgeschlagen: ${fehlerText(json) || res.status}`);
   return json;
@@ -167,7 +174,10 @@ export async function getAccessToken() {
     refresh_token: refreshToken,
     grant_type: 'refresh_token',
   });
-  const res = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', body });
+  let res;
+  try {
+    res = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', body, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+  } catch (e) { throw new Error(`Google token refresh: Token-Endpunkt ${netzGrund(e)}`); }
   const json = await tokenJson(res, 'Google token refresh');
   if (!res.ok) {
     throw new Error(`Google token refresh failed: ${fehlerText(json) || res.status}`);
@@ -262,8 +272,8 @@ export async function getAccessTokenFromFile(datei, { allowedScopes = null, fetc
   const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: token.refresh_token, grant_type: 'refresh_token' });
   let res;
   try {
-    res = await fetchImpl(token.token_uri || 'https://oauth2.googleapis.com/token', { method: 'POST', body, signal: AbortSignal.timeout(20_000) });
-  } catch (e) { throw new Error(`Google-Anmeldung mit ${datei}: Token-Endpunkt nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
+    res = await fetchImpl(token.token_uri || 'https://oauth2.googleapis.com/token', { method: 'POST', body, redirect: 'error', signal: AbortSignal.timeout(20_000) });
+  } catch (e) { throw new Error(`Google-Anmeldung mit ${datei}: Token-Endpunkt ${netzGrund(e)}`); }
   const json = await tokenJson(res, `Google-Anmeldung mit ${datei}`);
   if (!res.ok) throw new Error(`Google-Anmeldung mit ${datei} fehlgeschlagen: ${fehlerText(json) || res.status}`);
   pruefe(json.scope);

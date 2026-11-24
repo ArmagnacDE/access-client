@@ -219,3 +219,21 @@ test('kaputte Token-Antwort: feste Meldung ohne Fragment, Token mit Steuerzeiche
   const zeile = async () => ({ ok: true, status: 200, json: async () => ({ access_token: 'ya29.ab\ncd', expires_in: 3600 }) });
   await assert.rejects(getDelegatedToken({ datei, sub: 'b@example.org', scopes: ['s2'], fetchImpl: zeile }), (e) => !/ya29/.test(e.message) && /ohne gültiges access_token/.test(e.message));
 });
+
+test('Dienstkonto: fester Token-Endpunkt, token_uri aus der Schlüsseldatei wird nie genutzt (S112, wie OpenClaw S5)', async (t) => {
+  const { getDelegatedToken } = await import(`../src/google-auth.js?tokenuri=${Date.now()}`);
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const dir = tmpDir('ga-tokenuri-', t);
+  const datei = path.join(dir, 'sa.json');
+  writeFileSync(datei, JSON.stringify({ client_email: 'jobs@test.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://evil.example/token' }));
+  const urls = [];
+  const fetchImpl = async (u, init) => {
+    urls.push(String(u));
+    const claim = JSON.parse(Buffer.from(new URLSearchParams(String(init.body)).get('assertion').split('.')[1], 'base64url').toString());
+    urls.push(`aud=${claim.aud}`);
+    return { ok: true, status: 200, json: async () => ({ access_token: 'AT', expires_in: 3600 }) };
+  };
+  await getDelegatedToken({ datei, sub: 'a@example.org', scopes: ['s1'], fetchImpl });
+  assert.deepEqual(urls, ['https://oauth2.googleapis.com/token', 'aud=https://oauth2.googleapis.com/token']);
+});

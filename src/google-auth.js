@@ -50,6 +50,7 @@ function loadCreds() {
   return { clientId, clientSecret, refreshToken: token.refresh_token };
 }
 
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const SA_SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 // Präfix exakt (Großschreibung zählt); nur der Name darf Großbuchstaben haben, damit „GMAIL.x“ als Gmail auffällt.
 const SCOPE_URL = /^https:\/\/www\.googleapis\.com\/auth\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -113,7 +114,7 @@ export function serviceAccountAssertion(sa, nowSek = Math.floor(Date.now() / 100
   if (!sa?.client_email || !sa?.private_key) throw new Error('Dienstkonto-Datei ohne client_email/private_key');
   const kopf = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const inhalt = b64url(JSON.stringify({
-    iss: sa.client_email, ...(sub ? { sub } : {}), scope, aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+    iss: sa.client_email, ...(sub ? { sub } : {}), scope, aud: TOKEN_URL,
     iat: nowSek, exp: nowSek + 3600,
   }));
   const signatur = createSign('RSA-SHA256').update(`${kopf}.${inhalt}`).sign(sa.private_key).toString('base64url');
@@ -133,7 +134,9 @@ async function serviceAccountToken(datei, opts, fetchImpl = fetch) {
   // Zeitlimit: --pruefe im Deploy darf an einem hängenden Token-Endpunkt nicht ewig warten.
   let res;
   try {
-    res = await fetchImpl(sa.token_uri || 'https://oauth2.googleapis.com/token', { method: 'POST', body, signal: AbortSignal.timeout(20_000) });
+    // Fester Endpunkt: token_uri aus der Schlüsseldatei zählt nicht (eine veränderte Datei lenkte sonst die signierte
+    // Assertion um; S112, wie OpenClaw gmail.js seit S5).
+    res = await fetchImpl(TOKEN_URL, { method: 'POST', body, signal: AbortSignal.timeout(20_000) });
   } catch (e) { throw new Error(`Google-Dienstkonto-Anmeldung: Token-Endpunkt nicht erreichbar (${e?.cause?.code ?? e?.name ?? 'Fehler'})`); }
   const json = await tokenJson(res, 'Google-Dienstkonto-Anmeldung');
   if (!res.ok) throw new Error(`Google-Dienstkonto-Anmeldung fehlgeschlagen: ${fehlerText(json) || res.status}`);

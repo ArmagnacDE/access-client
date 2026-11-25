@@ -16,12 +16,13 @@
 import { closeSync, constants as FS, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { getAccessTokenFromFile, getServiceAccountToken, grantedScopesOf } from '../google-auth.js';
+import { configDir, getAccessTokenFromFile, getServiceAccountToken, grantedScopesOf } from '../google-auth.js';
 import { opVaultList, opWhoami } from '../op-read.js';
 import { OpTokenError, waehleToken } from '../op-token.js';
 
 const AUTH = 'https://www.googleapis.com/auth/';
 const MAX_JSON = 256 * 1024;
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 export const opDir = (env = process.env) => env.ACCESS_OP_DIR || join(homedir(), '.config', 'op');
 export const googleDir = (env = process.env) => env.GOOGLE_CONFIG_DIR || join(homedir(), '.config', 'gsheets');
@@ -67,9 +68,11 @@ function leseJson(datei) {
 const OAUTH_CODES = /\b(invalid_grant|invalid_client|unauthorized_client|invalid_scope|invalid_request|unsupported_grant_type|access_denied|deleted_client|disabled_client|org_internal|admin_policy_enforced|invalid_token)\b/;
 
 /** Google-Fehler als feste Meldung: Art des Schritts und höchstens ein bekannter Fehlercode, nie der freie Text. */
-export function googleFehler(e) {
-  const m = String(e?.message ?? '');
+export function googleFehler(e, datei = '') {
+  // Pfad vorher entfernen: ein Dateiname wie „token-invalid_client.json“ soll nichts einordnen (reviewer-Befund).
+  const m = datei ? String(e?.message ?? '').split(datei).join('') : String(e?.message ?? '');
   const code = OAUTH_CODES.exec(m)?.[1];
+  if (/leitet weiter/.test(m)) return 'Google: Endpunkt leitet weiter (Netz oder Proxy)';
   if (/nicht erreichbar/.test(m)) return 'Google: Endpunkt nicht erreichbar';
   if (/tokeninfo|keine Scopes/.test(m)) return 'Google: Scopes nicht abfragbar';
   if (/nicht lesbar|refresh_token fehlt|kein gültiges JSON|private_key/.test(m) && !code) return 'Datei für die Anmeldung unbrauchbar';
@@ -77,7 +80,7 @@ export function googleFehler(e) {
 }
 
 // Feste Meldungen von op-read, die keinen fremden Text enthalten (Prozessfehler und Antwortprüfung).
-const OP_FEST = /(Zeitüberschreitung nach \d+ s|op-CLI nicht gefunden \(PATH\)|Ausgabe größer als \d+ Byte|Ausgabe zu groß|Fehlerausgabe zu groß|Antwort ist keine (Tresorliste|Kontoangabe)|Token fehlt oder hat keine gültige Form)/;
+const OP_FEST = /(op beendet durch [A-Z0-9_]{1,20}|op nicht ausführbar \([A-Za-z0-9_]{1,40}\)|Zeitüberschreitung nach \d+ s|op-CLI nicht gefunden \(PATH\)|Ausgabe größer als \d+ Byte|Ausgabe zu groß|Fehlerausgabe zu groß|Antwort ist keine (Tresorliste|Kontoangabe)|Token fehlt oder hat keine gültige Form)/;
 
 /** op-Fehler als feste Meldung: eine feste Meldung von op-read oder eine Kategorie aus Stichworten, nie stderr-Text. */
 export function opFehler(e) {
@@ -98,6 +101,8 @@ export function opFehler(e) {
 // unter installed/web.
 function clientDateiOk(j, ordner) {
   if (j?.client_id && j?.client_secret) return true;
+  // google-auth liest oauth-client.json aus configDir() (process.env); nur prüfen, wenn das derselbe Ordner ist.
+  if (configDir() !== ordner) return false;
   const { j: oc } = leseJson(join(ordner, 'oauth-client.json'));
   const w = oc && typeof oc === 'object' ? (oc.installed || oc.web || oc) : null;
   return Boolean(w?.client_id && w?.client_secret);
@@ -137,11 +142,11 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
     }
     d.brauchbar = true;
     if (!check) continue;
-    const o = exec ? { token, exec } : { token };
-    try {
-      d.konto = await opWhoami(o);
-      d.tresore = await opVaultList(o);
-    } catch (e) { d.fehler = redact(opFehler(e)); }
+    // Kürzeres Zeitlimit als im Betrieb (Diagnose soll auch ohne Netz rasch fertig werden); Kontoabfrage und Tresorliste
+    // getrennt, damit ein whoami-Fehler die Tresorliste nicht kostet (reviewer-Befund).
+    const o = { token, timeoutMs: 15_000, ...(exec ? { exec } : {}) };
+    try { d.konto = await opWhoami(o); } catch (e) { d.kontoFehler = redact(opFehler(e)); }
+    try { d.tresore = await opVaultList(o); } catch (e) { d.fehler = redact(opFehler(e)); }
   }
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }
@@ -166,6 +171,8 @@ export async function googleInventory({ check, env, fetchImpl, redact, uid = pro
     try {
       if (d.typ === 'oauth-token') {
         if (!clientDateiOk(j, ordner)) { d.fehler = 'ohne client_id/client_secret und ohne brauchbare oauth-client.json daneben; nicht geprüft'; continue; }
+        // Refresh-Token und Client-Secret nur an Googles Token-Endpunkt (google-auth nähme token_uri aus der Datei).
+        if (j.token_uri != null && j.token_uri !== GOOGLE_TOKEN_URL) { d.fehler = 'token_uri ist nicht Googles Token-Endpunkt; nicht geprüft'; continue; }
         const accessToken = await getAccessTokenFromFile(datei, { fetchImpl });
         d.scopes = (await grantedScopesOf({ access_token: accessToken }, fetchImpl)).split(/\s+/).filter(Boolean).map(kurz).sort();
       } else if (d.typ === 'dienstkonto') {
@@ -173,7 +180,7 @@ export async function googleInventory({ check, env, fetchImpl, redact, uid = pro
         d.anmeldung = 'ok';
         d.scopes = 'je Anfrage; Delegierung nur in der Admin-Konsole sichtbar';
       }
-    } catch (e) { d.fehler = redact(googleFehler(e)); }
+    } catch (e) { d.fehler = redact(googleFehler(e, datei)); }
   }
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }

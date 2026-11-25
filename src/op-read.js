@@ -271,11 +271,13 @@ export async function opItemOtp({ vault, itemId, token, exec = execFile, timeout
 /** vaultGet-Funktion für tresorSuche({ vaultGet }) mit festem Token. */
 export const vaultGetMit = (token, optionen = {}) => (vault) => opVaultGet({ ...optionen, vault, token });
 
-// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen, nichts,
-// das wie ein Service-Account-Token aussieht (Codex-Befund S110 (Diagnose Konten und Scopes): sonst ginge ein Token als
-// Tresorname oder URL in die Ausgabe).
+// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen. Enthält er
+// die Form eines Service-Account-Tokens (ops_ + mindestens 20 Zeichen), geht er nicht hinaus (Codex-Befund S110
+// (Diagnose Konten und Scopes)); kurze Formen wie „Shops_Archiv“ bleiben (reviewer-Befund).
 const AUSGABE_NAME = /^[^\u0000-\u001f\u007f]{1,200}$/;
-const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) && !TOKENARTIG.test(x) ? x : null);
+const TOKEN_WERT = /ops_[A-Za-z0-9_\-.=+/]{20,}/;
+const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) && !TOKEN_WERT.test(x) ? x : null);
+export const NAME_VERDECKT = '[Name nicht ausgegeben]';
 
 /**
  * Tresore, die das Token sieht: `op vault list --format json`, davon nur die Namen (sortiert). Für die Diagnose
@@ -287,7 +289,8 @@ export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, 
   const out = await opAusfuehren(['vault', 'list', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 256 * 1024, path, home, was: 'Tresorliste', namen: [] });
   let j = null;
   try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
-  const namen = Array.isArray(j) ? j.map((v) => ausgabeText(v?.name)) : null;
+  // Ein tokenartiger Name wird einzeln verdeckt, die übrigen bleiben; Unlesbares (kein Text, Steuerzeichen) ist ein Fehler.
+  const namen = Array.isArray(j) ? j.map((v) => (typeof v?.name === 'string' && AUSGABE_NAME.test(v.name) ? (ausgabeText(v.name) ?? NAME_VERDECKT) : null)) : null;
   if (!namen || namen.some((n) => n == null)) throw new OpReadError('1Password: Antwort ist keine Tresorliste');
   return namen.sort((a, b) => a.localeCompare(b));
 }

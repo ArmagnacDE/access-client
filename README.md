@@ -153,7 +153,12 @@ Client-Secret, Schlüssel, keine Tresor-IDs oder Eintragsinhalte). Braucht keine
   `dienstkonto` mit Adresse, `oauth-client`, `unlesbar`, `keine JSON-Datei`). Mit `--check`: Token-Dateien werden
   erneuert, `scopes` meldet Google (tokeninfo); Dienstkonten melden sich mit `spreadsheets.readonly` an
   (`anmeldung: ok` heißt: Schlüssel gilt). Ihre Delegierung sieht nur die Admin-Konsole.
-- Fehler stehen je Datei unter `fehler` (geschwärzt); ein Fehler bricht den Lauf nicht ab.
+- Fehler stehen je Datei unter `fehler` (Tresorliste bzw. Google-Prüfung) und `kontoFehler` (`op whoami`), nur als feste
+  Meldung (Kategorie oder bekannter OAuth-Code), nie als Text von op oder Google; ein Fehler bricht den Lauf nicht ab.
+  Der Befehl endet mit Exit 0, auch wenn Prüfungen scheitern: Die Befunde stehen in der Ausgabe.
+- Ein tokenartiger Tresorname erscheint als `[Name nicht ausgegeben]`. Aufgefrischt wird nur gegen Googles
+  Token-Endpunkt (fremde `token_uri`: nicht geprüft) und nur, wenn `oauth-client.json` im selben Ordner liegt, den auch
+  `google-auth` liest. op-Aufrufe haben hier 15 s Zeitlimit.
 
 ### Konfiguration
 

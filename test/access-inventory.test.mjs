@@ -191,7 +191,8 @@ test('access --check: tokenartige Namen, Tresornamen, op-stderr und Google-Fehle
   assert.equal(r.code, 0, r.err);
   for (const w of [GEHEIM, 'ops_', VAULT_ID, '1//']) assert.ok(!r.out.includes(w), `Ausgabe enthält ${w}`);
   const ops = nachName(r.json.onepassword.dateien);
-  assert.match(ops['c.token'].fehler, /keine (Tresorliste|Kontoangabe)/);
+  assert.deepEqual(ops['c.token'].tresore, ['[Name nicht ausgegeben]']);
+  assert.equal(ops['c.token'].konto.url, null);
   assert.match(ops['d.token'].fehler, /op meldet einen Fehler/);
   assert.match(nachName(r.json.google.dateien)['token-tot.json'].fehler, /invalid_grant/);
 });
@@ -236,4 +237,52 @@ test('access: ops_ mitten im Namen geschwärzt; leere client-Felder prüfen oaut
     assert.deepEqual(gs['token-ohne-client.json'].scopes, ['drive.readonly', 'gmail.readonly']);
     assert.ok(!r2.out.includes(GEHEIM));
   } finally { if (alt === undefined) delete process.env.GOOGLE_CONFIG_DIR; else process.env.GOOGLE_CONFIG_DIR = alt; }
+});
+
+// reviewer-Befunde (S110 (Diagnose Konten und Scopes)): harmlose ops_-Namen bleiben, Tresorliste ohne whoami,
+// Refresh nur gegen Googles Token-Endpunkt und nur mit derselben Client-Quelle wie google-auth.
+test('access --check: „Shops_Archiv“ bleibt lesbar, Token-Name wird einzeln ersetzt; whoami-Fehler kostet die Tresorliste nicht', async (t) => {
+  const op = tmpDir('inv-op6-', t);
+  const g = tmpDir('inv-g6-', t);
+  fs.writeFileSync(path.join(g, 'shops_export.json'), '{}');
+  fs.writeFileSync(path.join(op, 'a.token'), TOK_A); fs.chmodSync(path.join(op, 'a.token'), 0o600);
+  const exec = (cmd, args, opts, cb) => {
+    const r = args[0] === 'whoami'
+      ? { err: Object.assign(new Error('x'), { code: 1 }), stderr: '[ERROR] unknown command' }
+      : { stdout: JSON.stringify([{ name: 'Shops_Archiv' }, { name: `ops_${'T'.repeat(40)}` }, { name: 'ai-ads' }]) };
+    queueMicrotask(() => cb(r.err ?? null, Buffer.from(r.stdout ?? ''), Buffer.from(r.stderr ?? '')));
+  };
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: g }, opExec: exec, fetchImpl: google().f });
+  assert.equal(r.code, 0, r.err);
+  const d = r.json.onepassword.dateien[0];
+  assert.deepEqual(d.tresore, ['[Name nicht ausgegeben]', 'ai-ads', 'Shops_Archiv']);
+  assert.match(d.kontoFehler, /op meldet einen Fehler/);
+  assert.ok(!r.out.includes('T'.repeat(40)));
+  assert.ok(r.json.google.dateien.some((x) => x.datei.endsWith('/shops_export.json')), 'harmloser Dateiname bleibt');
+});
+
+test('access --check: kein Refresh bei fremder token_uri oder abweichender Client-Quelle', async (t) => {
+  const g = tmpDir('inv-g7-', t);
+  fs.writeFileSync(path.join(g, 'token-fremd.json'), JSON.stringify({ refresh_token: `RT-lesen-${GEHEIM}`, client_id: 'cid', client_secret: `CS-${GEHEIM}`, token_uri: 'https://beispiel.example/token' }));
+  fs.writeFileSync(path.join(g, 'token-ohne-client.json'), JSON.stringify({ refresh_token: `RT-lesen-${GEHEIM}` }));
+  fs.writeFileSync(path.join(g, 'oauth-client.json'), JSON.stringify({ installed: { client_id: 'cid', client_secret: `CS-${GEHEIM}` } }));
+  const goo = google();
+  const alt = process.env.GOOGLE_CONFIG_DIR;
+  process.env.GOOGLE_CONFIG_DIR = path.join(g, 'anderswo');   // google-auth läse oauth-client.json woanders
+  try {
+    const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: path.join(g, 'fehlt'), GOOGLE_CONFIG_DIR: g }, opExec: opFake().exec, fetchImpl: goo.f });
+    const gs = nachName(r.json.google.dateien);
+    assert.match(gs['token-fremd.json'].fehler, /token_uri/);
+    assert.match(gs['token-ohne-client.json'].fehler, /oauth-client\.json/);
+    assert.equal(goo.log.length, 0, 'kein Aufruf an irgendeinen Endpunkt');
+  } finally { if (alt === undefined) delete process.env.GOOGLE_CONFIG_DIR; else process.env.GOOGLE_CONFIG_DIR = alt; }
+});
+
+test('googleFehler ordnet ohne den Pfad ein; opFehler kennt Signal und nicht ausführbar', async () => {
+  const { googleFehler, opFehler } = await import('../src/read/inventory.js');
+  const datei = '/x/token-invalid_client-tokeninfo.json';
+  assert.equal(googleFehler(new Error(`Google-Anmeldung mit ${datei} fehlgeschlagen: invalid_grant Token has been expired`), datei), 'Google: Anmeldung fehlgeschlagen (invalid_grant)');
+  assert.equal(googleFehler(new Error(`Google-Anmeldung mit ${datei} fehlgeschlagen: 400`), datei), 'Google: Anmeldung fehlgeschlagen');
+  assert.equal(opFehler(new Error('1Password: Kontoabfrage fehlgeschlagen: op beendet durch SIGKILL')), '1Password: op beendet durch SIGKILL');
+  assert.equal(opFehler(new Error('1Password: Kontoabfrage fehlgeschlagen: op nicht ausführbar (EACCES)')), '1Password: op nicht ausführbar (EACCES)');
 });

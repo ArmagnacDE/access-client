@@ -23,6 +23,36 @@ import { OpTokenError, waehleToken } from '../op-token.js';
 const AUTH = 'https://www.googleapis.com/auth/';
 const MAX_JSON = 256 * 1024;
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+// S146 (access-read access: schneller und Register-Lücken): alle Prüfungen laufen gleichzeitig (höchstens GLEICHZEITIG je
+// Bereich) und enden spätestens nach dem Gesamtzeitlimit; ein op-Aufruf höchstens OP_TIMEOUT_MS.
+export const FRIST_MS = 30_000;
+const GLEICHZEITIG = 8;
+const OP_TIMEOUT_MS = 15_000;
+export const FRIST_MELDUNG = 'Gesamtzeitlimit überschritten; nicht fertig geprüft';
+
+/** Frist für einen Lauf: Restzeit und ein Signal, das beim Ablauf feuert. */
+export function frist(ms = FRIST_MS) {
+  const ende = Date.now() + ms;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  const abgelaufen = new Promise((res) => ac.signal.addEventListener('abort', res, { once: true }));
+  return { ms, signal: ac.signal, rest: () => Math.max(0, ende - Date.now()), abgelaufen, ende: () => { clearTimeout(timer); } };
+}
+
+/** Prüfung mit Frist: was nach Ablauf nicht fertig ist, bekommt FRIST_MELDUNG; Teilergebnisse danach werden verworfen. */
+async function mitFrist(f, d, fn) {
+  if (f.signal.aborted) { d.fehler = FRIST_MELDUNG; return; }
+  const teil = {};
+  const fertig = await Promise.race([fn(teil).then(() => true, () => true), f.abgelaufen.then(() => false)]);
+  if (fertig) Object.assign(d, teil); else d.fehler = FRIST_MELDUNG;
+}
+
+/** Aufgaben mit höchstens n gleichzeitig ausführen. */
+async function gleichzeitig(aufgaben, n = GLEICHZEITIG) {
+  let i = 0;
+  const arbeiter = async () => { while (i < aufgaben.length) { const a = aufgaben[i++]; await a(); } };
+  await Promise.all(Array.from({ length: Math.min(n, aufgaben.length) }, arbeiter));
+}
 
 export const opDir = (env = process.env) => env.ACCESS_OP_DIR || join(homedir(), '.config', 'op');
 export const googleDir = (env = process.env) => env.GOOGLE_CONFIG_DIR || join(homedir(), '.config', 'gsheets');
@@ -123,12 +153,13 @@ export function googleTyp(j) {
 
 /**
  * 1Password-Token-Dateien.
- * @param {{ check: boolean, env: object, exec?: Function, redact: (s: string) => string, uid?: number }} o
+ * @param {{ check: boolean, env: object, exec?: Function, redact: (s: string) => string, uid?: number, frist?: ReturnType<typeof frist> }} o
  */
-export async function onePasswordInventory({ check, env, exec, redact, uid = process.getuid?.() }) {
+export async function onePasswordInventory({ check, env, exec, redact, uid = process.getuid?.(), frist: f = frist() }) {
   const ordner = opDir(env);
   const { fehler, liste } = eintraege(ordner, uid);
   const dateien = [];
+  const aufgaben = [];
   for (const { datei, st, basis } of liste) {
     const d = { ...basis };
     dateien.push(d);
@@ -142,23 +173,31 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
     }
     d.brauchbar = true;
     if (!check) continue;
-    // Kürzeres Zeitlimit als im Betrieb (Diagnose soll auch ohne Netz rasch fertig werden); Kontoabfrage und Tresorliste
-    // getrennt, damit ein whoami-Fehler die Tresorliste nicht kostet (reviewer-Befund).
-    const o = { token, timeoutMs: 15_000, ...(exec ? { exec } : {}) };
-    try { d.konto = await opWhoami(o); } catch (e) { d.kontoFehler = redact(opFehler(e)); }
-    try { d.tresore = await opVaultList(o); } catch (e) { d.fehler = redact(opFehler(e)); }
+    // Kürzeres Zeitlimit als im Betrieb, höchstens die Restzeit der Frist (der Kindprozess endet dann selbst); Kontoabfrage
+    // und Tresorliste getrennt und gleichzeitig, damit ein whoami-Fehler die Tresorliste nicht kostet (reviewer-Befund).
+    aufgaben.push(() => mitFrist(f, d, async (teil) => {
+      const o = { token, timeoutMs: Math.max(1, Math.min(OP_TIMEOUT_MS, f.rest())), ...(exec ? { exec } : {}) };
+      await Promise.all([
+        opWhoami(o).then((k) => { teil.konto = k; }, (e) => { teil.kontoFehler = redact(opFehler(e)); }),
+        opVaultList(o).then((t) => { teil.tresore = t; }, (e) => { teil.fehler = redact(opFehler(e)); }),
+      ]);
+    }));
   }
+  await gleichzeitig(aufgaben);
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }
 
 /**
  * Google-Credentials.
- * @param {{ check: boolean, env: object, fetchImpl: typeof fetch, redact: (s: string) => string, uid?: number }} o
+ * @param {{ check: boolean, env: object, fetchImpl: typeof fetch, redact: (s: string) => string, uid?: number, frist?: ReturnType<typeof frist> }} o
  */
-export async function googleInventory({ check, env, fetchImpl, redact, uid = process.getuid?.() }) {
+export async function googleInventory({ check, env, fetchImpl, redact, uid = process.getuid?.(), frist: f = frist() }) {
   const ordner = googleDir(env);
   const { fehler, liste } = eintraege(ordner, uid);
   const dateien = [];
+  const aufgaben = [];
+  // Jeder Google-Aufruf bricht beim Ablauf der Frist ab (eigenes Signal des Aufrufers bleibt zusätzlich wirksam).
+  const mitSignal = (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, f.signal]) : f.signal });
   for (const { datei, st, basis } of liste) {
     const d = { ...basis };
     dateien.push(d);
@@ -168,19 +207,24 @@ export async function googleInventory({ check, env, fetchImpl, redact, uid = pro
     Object.assign(d, googleTyp(j));
     if (grund) d.grund = grund;
     if (!check) continue;
-    try {
-      if (d.typ === 'oauth-token') {
-        if (!clientDateiOk(j, ordner)) { d.fehler = 'ohne client_id/client_secret und ohne brauchbare oauth-client.json daneben; nicht geprüft'; continue; }
-        // Refresh-Token und Client-Secret nur an Googles Token-Endpunkt (google-auth nähme token_uri aus der Datei).
-        if (j.token_uri != null && j.token_uri !== GOOGLE_TOKEN_URL) { d.fehler = 'token_uri ist nicht Googles Token-Endpunkt; nicht geprüft'; continue; }
-        const accessToken = await getAccessTokenFromFile(datei, { fetchImpl });
-        d.scopes = (await grantedScopesOf({ access_token: accessToken }, fetchImpl)).split(/\s+/).filter(Boolean).map(kurz).sort();
-      } else if (d.typ === 'dienstkonto') {
-        await getServiceAccountToken({ datei, scopes: [`${AUTH}spreadsheets.readonly`], fetchImpl });
-        d.anmeldung = 'ok';
-        d.scopes = 'je Anfrage; Delegierung nur in der Admin-Konsole sichtbar';
-      }
-    } catch (e) { d.fehler = redact(googleFehler(e, datei)); }
+    if (d.typ === 'oauth-token') {
+      if (!clientDateiOk(j, ordner)) { d.fehler = 'ohne client_id/client_secret und ohne brauchbare oauth-client.json daneben; nicht geprüft'; continue; }
+      // Refresh-Token und Client-Secret nur an Googles Token-Endpunkt (google-auth nähme token_uri aus der Datei).
+      if (j.token_uri != null && j.token_uri !== GOOGLE_TOKEN_URL) { d.fehler = 'token_uri ist nicht Googles Token-Endpunkt; nicht geprüft'; continue; }
+    } else if (d.typ !== 'dienstkonto') continue;
+    aufgaben.push(() => mitFrist(f, d, async (teil) => {
+      try {
+        if (d.typ === 'oauth-token') {
+          const accessToken = await getAccessTokenFromFile(datei, { fetchImpl: mitSignal });
+          teil.scopes = (await grantedScopesOf({ access_token: accessToken }, mitSignal)).split(/\s+/).filter(Boolean).map(kurz).sort();
+        } else {
+          await getServiceAccountToken({ datei, scopes: [`${AUTH}spreadsheets.readonly`], fetchImpl: mitSignal });
+          teil.anmeldung = 'ok';
+          teil.scopes = 'je Anfrage; Delegierung nur in der Admin-Konsole sichtbar';
+        }
+      } catch (e) { teil.fehler = redact(googleFehler(e, datei)); }
+    }));
   }
+  await gleichzeitig(aufgaben);
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }

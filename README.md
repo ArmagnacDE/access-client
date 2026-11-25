@@ -159,6 +159,11 @@ Client-Secret, Schlüssel, keine Tresor-IDs oder Eintragsinhalte). Braucht keine
 - Ein tokenartiger Tresorname erscheint als `[Name nicht ausgegeben]`. Aufgefrischt wird nur gegen Googles
   Token-Endpunkt (fremde `token_uri`: nicht geprüft) und nur, wenn `oauth-client.json` im selben Ordner liegt, den auch
   `google-auth` liest. op-Aufrufe haben hier 15 s Zeitlimit.
+- **Gleichzeitig, mit Gesamtzeitlimit (ab v1.7.0):** 1Password und Google laufen gleichzeitig, je Bereich höchstens 8
+  Prüfungen auf einmal, `op whoami` und `op vault list` eines Tokens parallel. Nach 30 s (`zeitlimitSekunden` in der
+  Ausgabe) endet der Lauf: Was bis dahin nicht fertig ist, hat `fehler: "Gesamtzeitlimit überschritten; nicht fertig
+  geprüft"` und keine Teilergebnisse; Google-Aufrufe werden abgebrochen, op-Aufrufe bekommen höchstens die Restzeit.
+  Gemessen auf claude (25.11.2026, 11 Tokens, 10 Google-Dateien): vorher 6,6–9,9 s, nachher 1,1 s, gleiche Ausgabe.
 
 ### Konfiguration
 
@@ -330,6 +335,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
 - neu (v1.6.0) `access-read access [--check]` (Diagnose der Zugänge, S110 (Diagnose Konten und Scopes)) und in `op-read` `opVaultList`, `opWhoami`.
+- v1.7.0: `access-read access --check` prüft gleichzeitig mit Gesamtzeitlimit 30 s (S146 (access-read access: schneller und Register-Lücken)).
 - neu (v1.5.2) `--remove-old`/`--restore` in `scripts/security-label.mjs` (`gmail-filter-cleanup`).
 - neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
   „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); dazu „two-step verification“, „two-step login“,

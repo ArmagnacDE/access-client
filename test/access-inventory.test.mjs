@@ -286,3 +286,55 @@ test('googleFehler ordnet ohne den Pfad ein; opFehler kennt Signal und nicht aus
   assert.equal(opFehler(new Error('1Password: Kontoabfrage fehlgeschlagen: op beendet durch SIGKILL')), '1Password: op beendet durch SIGKILL');
   assert.equal(opFehler(new Error('1Password: Kontoabfrage fehlgeschlagen: op nicht ausführbar (EACCES)')), '1Password: op nicht ausführbar (EACCES)');
 });
+
+// S146 (access-read access: schneller und Register-Lücken): reviewer B4 aus S110 — die Prüfungen laufen parallel und
+// enden spätestens nach einem Gesamtzeitlimit; was bis dahin nicht fertig ist, steht mit fester Meldung da, nie mit Werten.
+test('access --check: op- und Google-Prüfungen laufen gleichzeitig, Reihenfolge der Ausgabe bleibt', async (t) => {
+  const { op, g } = bestand(t);
+  const o = opFake();
+  const goo = google();
+  let laufend = 0;
+  let max = 0;
+  const verzoegert = (fn) => (...a) => { laufend += 1; max = Math.max(max, laufend); return new Promise((res) => setTimeout(res, 50)).then(() => fn(...a)).finally(() => { laufend -= 1; }); };
+  const exec = (cmd, args, opts, cb) => { laufend += 1; max = Math.max(max, laufend); setTimeout(() => { laufend -= 1; o.exec(cmd, args, opts, cb); }, 50); };
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: g }, opExec: exec, fetchImpl: verzoegert(goo.f) });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(max >= 4, `höchstens ${max} Prüfungen gleichzeitig`);
+  const namen = r.json.onepassword.dateien.map((x) => x.datei.split('/').pop());
+  assert.deepEqual(namen, [...namen].sort(), 'Ausgabe sortiert wie vorher');
+  const ops = nachName(r.json.onepassword.dateien);
+  assert.deepEqual(ops['james.token'].tresore, ['ai-eins', 'ai-zwei']);
+  assert.deepEqual(nachName(r.json.google.dateien)['token-read-shop.json'].scopes, ['drive.readonly', 'gmail.readonly']);
+});
+
+test('access --check: Gesamtzeitlimit beendet hängende op- und Google-Prüfungen mit fester Meldung, ohne Werte', async (t) => {
+  const { op, g } = bestand(t);
+  const o = opFake();
+  const goo = google();
+  // james.token und token-read-shop.json hängen; der Rest antwortet sofort.
+  const exec = (cmd, args, opts, cb) => { if (opts.env.OP_SERVICE_ACCOUNT_TOKEN !== TOK_B) o.exec(cmd, args, opts, cb); };
+  let signale = 0;
+  const fetchImpl = (url, init = {}) => {
+    if (String(init.body ?? '').includes(`RT-lesen-${GEHEIM}`)) {
+      if (init.signal) signale += 1;
+      return new Promise((_, rej) => init.signal?.addEventListener('abort', () => rej(new Error(`abgebrochen ${GEHEIM}`))));
+    }
+    return goo.f(url, init);
+  };
+  const start = Date.now();
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: g }, opExec: exec, fetchImpl, accessDeadlineMs: 300 });
+  const dauer = Date.now() - start;
+  assert.equal(r.code, 0, r.err);
+  assert.ok(dauer < 2000, `Lauf dauerte ${dauer} ms`);
+  assert.ok(!r.out.includes(GEHEIM), 'kein Wert in der Ausgabe');
+  assert.ok(!r.out.includes('ops_'), 'kein Token in der Ausgabe');
+  const ops = nachName(r.json.onepassword.dateien);
+  assert.match(ops['james.token'].fehler, /Gesamtzeitlimit/);
+  assert.equal(ops['james.token'].tresore, undefined);
+  assert.deepEqual(ops['ai-ads.token'].tresore, ['ai-ads'], 'schnelle Prüfungen bleiben');
+  const gs = nachName(r.json.google.dateien);
+  assert.match(gs['token-read-shop.json'].fehler, /Gesamtzeitlimit/);
+  assert.equal(signale, 1, 'Google-Aufruf bekommt ein Abbruchsignal');
+  assert.deepEqual(gs['token.json'].scopes, ['drive', 'gmail.modify']);
+  assert.equal(r.json.zeitlimitSekunden, 0.3);
+});

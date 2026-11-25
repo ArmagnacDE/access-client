@@ -158,10 +158,12 @@ function opAusfuehren(args, { token, exec, timeoutMs, maxBytes, path, home, was,
       const roh = schwaerze(Buffer.isBuffer(stderr) ? stderr.toString('utf8') : stderr, token);
       // Prozessfehler gehen der fachlichen Einordnung vor und sind immer ein Stopp: Zeitüberschreitung, kein op,
       // Ausgabelimit, Tod durch ein Signal, jeder nicht numerische Code. Eingeordnet wird nur bei numerischem Exit-Code.
+      // Das Ausgabelimit zuerst: execFile beendet den Kindprozess dabei selbst, ein Fehler mit killed/Signal ist dann
+      // keine Zeitüberschreitung (S51). Aufrufer erkennen es an „Ausgabe zu groß“ (nicht wiederholen).
       let prozess = null;
-      if (err.killed || err.code === 'ETIMEDOUT') prozess = `Zeitüberschreitung nach ${Math.round(timeoutMs / 1000)} s`;
+      if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') prozess = `Ausgabe zu groß (mehr als ${maxBytes} Byte)`;
+      else if (err.killed || err.code === 'ETIMEDOUT') prozess = `Zeitüberschreitung nach ${Math.round(timeoutMs / 1000)} s`;
       else if (err.code === 'ENOENT') prozess = 'op-CLI nicht gefunden (PATH)';
-      else if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') prozess = `Ausgabe größer als ${maxBytes} Byte`;
       else if (err.signal) prozess = `op beendet durch ${String(err.signal).slice(0, 20)}`;
       else if (typeof err.code !== 'number') prozess = `op nicht ausführbar (${String(err.code ?? 'unbekannt').slice(0, 40)})`;
       const { art, zeile } = prozess ? { art: null, zeile: '' } : einordnen(roh, namen);

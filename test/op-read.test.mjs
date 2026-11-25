@@ -99,7 +99,7 @@ test('opRead: Zeitüberschreitung, fehlendes op, zu große Ausgabe, leeres stder
   const fall = async (err, stderr = '') => opRead({ ref: 'op://v/x/y', token: TOKEN, exec: fake(() => ({ err, stderr })).exec, timeoutMs: 5000 }).catch((x) => x);
   assert.match((await fall(fehler({ killed: true, signal: 'SIGTERM', code: null }))).message, /Zeitüberschreitung nach 5 s/);
   assert.match((await fall(fehler({ code: 'ENOENT' }))).message, /op-CLI nicht gefunden/);
-  assert.match((await fall(fehler({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }))).message, /größer als 65536 Byte/);
+  assert.match((await fall(fehler({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }))).message, /Ausgabe zu groß \(mehr als 65536 Byte\)$/);
   assert.match((await fall(fehler({ code: 6 }))).message, /Exit 6/);
   // exec wirft synchron (z. B. ungültige Optionen): als OpReadError, kein unbehandelter Fehler.
   const e = await opRead({ ref: 'op://v/x/y', token: TOKEN, exec: () => { throw Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }); } }).catch((x) => x);
@@ -311,6 +311,30 @@ test('Fable 9: leerer Wert bei Exit 0 ist ein Fehler', async () => {
   await assert.rejects(opRead({ ref: 'op://v/x/y', token: TOKEN, exec: f.exec }), /leeren Wert/);
 });
 
+test('S51: Ausgabe-Limit mit killed (Prozess nach dem Limit beendet) ist keine Zeitüberschreitung', async () => {
+  // execFile beendet den Kindprozess beim Ausgabe-Limit; trägt der Fehler dabei killed/SIGTERM, zählt der Code.
+  const err = fehler({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true, signal: 'SIGTERM' });
+  const e = await opRead({ ref: 'op://v/x/y', token: TOKEN, timeoutMs: 5000,
+    exec: fake(() => ({ err, stderr: '[ERROR] 2026/11/25 10:00:00 "v" isn\'t a vault in this account.' })).exec }).catch((x) => x);
+  assert.ok(e instanceof OpReadError);
+  assert.ok(!(e instanceof OpItemMissingError));
+  assert.doesNotMatch(e.message, /Zeitüberschreitung/);
+  assert.equal(e.message, '1Password: Lesen fehlgeschlagen: Ausgabe zu groß (mehr als 65536 Byte)');
+  // ETIMEDOUT bleibt Zeitüberschreitung, auch ohne killed.
+  const z = await opRead({ ref: 'op://v/x/y', token: TOKEN, timeoutMs: 5000, exec: fake(() => ({ err: fehler({ code: 'ETIMEDOUT' }) })).exec }).catch((x) => x);
+  assert.match(z.message, /Zeitüberschreitung nach 5 s$/);
+});
+
+test('S51 reviewer: Überlauf auf stderr heißt „Fehlerausgabe zu groß“, nicht „Ausgabe zu groß“ (Wert selbst ist nicht zu groß)', async () => {
+  const err = Object.assign(new RangeError('stderr maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+  const e = await opRead({ ref: 'op://v/x/y', token: TOKEN, exec: fake(() => ({ err })).exec }).catch((x) => x);
+  assert.equal(e.message, '1Password: Lesen fehlgeschlagen: Fehlerausgabe zu groß (mehr als 65536 Byte)');
+  const { execFile } = await import('node:child_process');
+  const echt = await opRead({ ref: 'op://v/x/y', token: TOKEN, maxBytes: 100,
+    exec: (cmd, args, opts, cb) => execFile(process.execPath, ['-e', 'process.stderr.write("x".repeat(1000))'], { ...opts, env: { ...opts.env, PATH: process.env.PATH } }, cb) }).catch((x) => x);
+  assert.match(echt.message, /: Fehlerausgabe zu groß \(mehr als 100 Byte\)$/);
+});
+
 test('Fable 11: echtes execFile (node als op-Ersatz): Umgebung, Zeitüberschreitung, Ausgabelimit, Exit-Code', async () => {
   const { execFile } = await import('node:child_process');
   const als = (skript) => (cmd, args, opts, cb) => execFile(process.execPath, ['-e', skript], { ...opts, env: { ...opts.env, PATH: process.env.PATH } }, cb);
@@ -321,7 +345,7 @@ test('Fable 11: echtes execFile (node als op-Ersatz): Umgebung, Zeitüberschreit
   assert.ok(!(zeit instanceof OpItemMissingError));
   assert.match(zeit.message, /Zeitüberschreitung/);
   const gross = await opRead({ ref: 'op://v/x/y', token: TOKEN, maxBytes: 100, exec: als('process.stdout.write("x".repeat(1000))') }).catch((x) => x);
-  assert.match(gross.message, /größer als 100 Byte/);
+  assert.match(gross.message, /Ausgabe zu groß \(mehr als 100 Byte\)$/);
   const fehlt = await opRead({ ref: 'op://v/x/y', token: TOKEN, exec: als('process.stderr.write("[ERROR] 2026/11/15 10:00:00 \\"x\\" isn\'t an item in the \\"v\\" vault.\\n"); process.exit(1)') }).catch((x) => x);
   assert.ok(fehlt instanceof OpItemMissingError);
   assert.equal(fehlt.was, 'eintrag');

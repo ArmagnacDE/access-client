@@ -88,6 +88,9 @@ const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
   Das ganze stderr hängt nicht aufzählbar als `opStderr` am Fehler. „Gibt es nicht“ ist `OpItemMissingError` mit
   `was` = `tresor`, `eintrag` oder `feld`, mehrere Treffer `OpItemAmbiguousError`, alles andere `OpReadError`.
   Eingeordnet wird nur bei normalem Exit-Code; Zeitüberschreitung, Signal oder Ausgabelimit sind immer ein Stopp.
+  Das Ausgabelimit (`maxBytes`) meldet „Ausgabe zu groß (mehr als N Byte)“, nie „Zeitüberschreitung“, auch wenn der
+  Kindprozess dabei beendet wurde (ab v1.5.3); es heilt nicht von selbst, Aufrufer wiederholen es nicht. Zu viel
+  stderr heißt „Fehlerausgabe zu groß (mehr als N Byte)“ (eigenes Limit, der Wert selbst ist nicht zu groß).
   Die übergebenen Namen werden vor der Einordnung aus der Meldung entfernt, damit ein Name wie „isn't a vault …“
   nichts verschiebt.
 - `opVaultGet({ vault, token })` → `{ id, name }`; `vaultGetMit(token)` passt als `vaultGet` für `tresorSuche`.
@@ -313,6 +316,7 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - neu (v1.5.0) Merkmal-Liste um Varianten und Französisch ergänzt (A782 a); To/Cc mit Anzeigenamen nach RFC 2047
   (`encodeAddressHeader`, auch in `buildMime`); Google-Token-Abrufe ohne Weiterleitung (`redirect: 'error'`) mit
   lesbarem Grund (`netzGrund`); Weiterleitungs-Befunde im `mail-guard` wie oben.
+- `op-read` (v1.5.3): Ausgabelimit wird vor Zeitüberschreitung geprüft und heißt „Ausgabe zu groß (mehr als N Byte)“ (vorher „Ausgabe größer als N Byte“).
 - neu (v1.4.0) `mail-guard` (Modul und Befehl); `gmail-setup` liest zusätzlich Weiterleitungen, Delegierungen, IMAP und POP (`readMailSettings`, nur GET) und exportiert `missingSecurityParts`, `isSecurityFilter`.
 - neu (v1.3.0) `mailDelegation`, `access-mail`, `mail` (`draftMail`), `createCheckedDraft` mit `text` und `attachments`
   (`buildDraftMime`), `blockSecurityContent`, `security-mail`, `gmail-setup` mit `scripts/security-label.mjs`.

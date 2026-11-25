@@ -340,3 +340,32 @@ test('access --check: Gesamtzeitlimit beendet hängende op- und Google-Prüfunge
   assert.deepEqual(gs['token.json'].scopes, ['drive', 'gmail.modify']);
   assert.equal(r.json.zeitlimitSekunden, 0.3);
 });
+
+// Codex-Befunde zu S146 (access-read access: schneller und Register-Lücken): feste Feldreihenfolge unabhängig von der
+// Antwortzeit; ein op, das SIGTERM ignoriert, endet trotzdem mit der Frist (SIGKILL).
+test('access --check: Feldreihenfolge je Token fest, auch wenn vault list vor whoami antwortet', async (t) => {
+  const { op, g } = bestand(t);
+  const o = opFake();
+  const exec = (cmd, args, opts, cb) => setTimeout(() => o.exec(cmd, args, opts, cb), args[0] === 'whoami' ? 40 : 0);
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: g }, opExec: exec, fetchImpl: google().f });
+  const d = nachName(r.json.onepassword.dateien)['james.token'];
+  assert.deepEqual(Object.keys(d), ['datei', 'art', 'rechte', 'eigentum', 'brauchbar', 'konto', 'name', 'tresore']);
+});
+
+test('access --check: op, das SIGTERM ignoriert, wird beim Gesamtzeitlimit hart beendet', async (t) => {
+  const { execFile } = await import('node:child_process');
+  const op = tmpDir('inv-op8-', t);
+  fs.writeFileSync(path.join(op, 'a.token'), TOK_A); fs.chmodSync(path.join(op, 'a.token'), 0o600);
+  const kinder = [];
+  const signale = [];
+  const exec = (cmd, args, opts, cb) => {
+    signale.push(opts.killSignal);
+    kinder.push(execFile('sh', ['-c', 'trap "" TERM; sleep 20'], opts, cb));
+  };
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: path.join(op, 'fehlt') }, opExec: exec, fetchImpl: google().f, accessDeadlineMs: 300 });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.json.onepassword.dateien[0].fehler, /Gesamtzeitlimit/);
+  assert.ok(signale.length > 0 && signale.every((s) => s === 'SIGKILL'), String(signale));
+  await new Promise((res) => setTimeout(res, 300));
+  for (const k of kinder) assert.ok(k.exitCode !== null || k.signalCode !== null, `Kindprozess ${k.pid} läuft noch`);
+});

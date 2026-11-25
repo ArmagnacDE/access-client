@@ -155,7 +155,13 @@ export function googleTyp(j) {
  * 1Password-Token-Dateien.
  * @param {{ check: boolean, env: object, exec?: Function, redact: (s: string) => string, uid?: number, frist?: ReturnType<typeof frist> }} o
  */
-export async function onePasswordInventory({ check, env, exec, redact, uid = process.getuid?.(), frist: f = frist() }) {
+export async function onePasswordInventory({ frist: f, ...o }) {
+  if (f) return opInventar({ ...o, f });
+  const eigene = frist();
+  try { return await opInventar({ ...o, f: eigene }); } finally { eigene.ende(); }
+}
+
+async function opInventar({ check, env, exec, redact, uid = process.getuid?.(), f }) {
   const ordner = opDir(env);
   const { fehler, liste } = eintraege(ordner, uid);
   const dateien = [];
@@ -176,13 +182,14 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
     // Kürzeres Zeitlimit als im Betrieb, höchstens die Restzeit der Frist (der Kindprozess endet dann selbst); Kontoabfrage
     // und Tresorliste getrennt und gleichzeitig, damit ein whoami-Fehler die Tresorliste nicht kostet (reviewer-Befund).
     aufgaben.push(() => mitFrist(f, d, async (teil) => {
-      const o = { token, timeoutMs: Math.max(1, Math.min(OP_TIMEOUT_MS, f.rest())), ...(exec ? { exec } : {}) };
-      await Promise.all([
-        opWhoami(o).then((k) => { teil.konto = k; }, (e) => { teil.kontoFehler = redact(opFehler(e)); }),
-        // Name des Service Accounts (op whoami nennt ihn nicht); Fehler einzeln, kostet die übrigen Angaben nicht.
-        opSelf(o).then((k) => { teil.name = k.name; }, (e) => { teil.nameFehler = redact(opFehler(e)); }),
-        opVaultList(o).then((t) => { teil.tresore = t; }, (e) => { teil.fehler = redact(opFehler(e)); }),
-      ]);
+      // SIGKILL beim Zeitlimit: ein op, das SIGTERM ignoriert, hielte sonst den Prozess offen (Codex-Befund S146).
+      const o = { token, timeoutMs: Math.max(1, Math.min(OP_TIMEOUT_MS, f.rest())), killSignal: 'SIGKILL', ...(exec ? { exec } : {}) };
+      const [konto, self, tresore] = await Promise.allSettled([opWhoami(o), opSelf(o), opVaultList(o)]);
+      // Feste Feldreihenfolge, unabhängig davon, welche Antwort zuerst kommt (Codex-Befund S146).
+      if (konto.status === 'fulfilled') teil.konto = konto.value; else teil.kontoFehler = redact(opFehler(konto.reason));
+      // Name des Service Accounts (op whoami nennt ihn nicht); Fehler einzeln, kostet die übrigen Angaben nicht.
+      if (self.status === 'fulfilled') teil.name = self.value.name; else teil.nameFehler = redact(opFehler(self.reason));
+      if (tresore.status === 'fulfilled') teil.tresore = tresore.value; else teil.fehler = redact(opFehler(tresore.reason));
     }));
   }
   await gleichzeitig(aufgaben);
@@ -193,7 +200,13 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
  * Google-Credentials.
  * @param {{ check: boolean, env: object, fetchImpl: typeof fetch, redact: (s: string) => string, uid?: number, frist?: ReturnType<typeof frist> }} o
  */
-export async function googleInventory({ check, env, fetchImpl, redact, uid = process.getuid?.(), frist: f = frist() }) {
+export async function googleInventory({ frist: f, ...o }) {
+  if (f) return googleInventar({ ...o, f });
+  const eigene = frist();
+  try { return await googleInventar({ ...o, f: eigene }); } finally { eigene.ende(); }
+}
+
+async function googleInventar({ check, env, fetchImpl, redact, uid = process.getuid?.(), f }) {
   const ordner = googleDir(env);
   const { fehler, liste } = eintraege(ordner, uid);
   const dateien = [];

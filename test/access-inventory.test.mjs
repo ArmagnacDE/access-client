@@ -135,7 +135,7 @@ test('access --check: Tresore je Token über op-read, Scopes je Google-Token, Fe
   assert.deepEqual(ops['ai-ads.token'].tresore, ['ai-ads']);
   assert.deepEqual(ops['james.token'].tresore, ['ai-eins', 'ai-zwei']);
   assert.deepEqual(ops['james.token'].konto, { typ: 'SERVICE_ACCOUNT', email: 'ai-zwei@x.1passwordserviceaccounts.eu', url: 'https://beispiel.1password.eu' });
-  assert.match(ops['kaputt.token'].fehler, /Invalid service account token/);
+  assert.match(ops['kaputt.token'].fehler, /Token ungültig oder widerrufen/);
   assert.equal(ops['customs.token'].tresore, undefined, 'unbrauchbare Datei: kein op-Aufruf');
   // op nur für die drei brauchbaren Dateien, nur whoami und vault list
   assert.deepEqual([...new Set(o.aufrufe.map((a) => a.token))].sort(), [TOK_A, TOK_B, TOK_KAPUTT].sort());
@@ -143,7 +143,7 @@ test('access --check: Tresore je Token über op-read, Scopes je Google-Token, Fe
   const gs = nachName(r.json.google.dateien);
   assert.deepEqual(gs['token.json'].scopes, ['drive', 'gmail.modify']);
   assert.deepEqual(gs['token-read-shop.json'].scopes, ['drive.readonly', 'gmail.readonly']);
-  assert.match(gs['token-tot.json'].fehler, /expired or revoked/);
+  assert.match(gs['token-tot.json'].fehler, /invalid_grant/);
   assert.equal(gs['sa-jobs.json'].anmeldung, 'ok');
   assert.match(gs['sa-jobs.json'].scopes, /Admin-Konsole/);
   assert.equal(gs['oauth-client.json'].scopes, undefined);
@@ -163,4 +163,50 @@ test('access: fehlende Ordner sind ein Befund, kein Abbruch', async (t) => {
 test('access: unbekannte Option und Zusatzargumente sind Aufruffehler', async () => {
   assert.equal((await call(['access', 'x'], { env: {} })).code, 2);
   assert.equal((await call(['access', '--max', '3'], { env: {} })).code, 2);
+});
+
+// Codex-Befunde A1–A5 (S110 (Diagnose Konten und Scopes)): Werte auch in Pfaden, erlaubten Feldern und Fehlerpfaden nie
+// ausgeben; eine Sonderdatei hält den Lauf nicht an.
+test('access --check: tokenartige Namen, Tresornamen, op-stderr und Google-Fehlertexte geben nie Werte aus', async (t) => {
+  const op = tmpDir('inv-op2-', t);
+  const g = tmpDir('inv-g2-', t);
+  const TOK_C = `ops_${'C'.repeat(30)}${GEHEIM}`;
+  const TOK_D = `ops_${'D'.repeat(30)}${GEHEIM}`;
+  const NAME_TOKEN = `ops_${'N'.repeat(30)}`;
+  const VAULT_ID = 'abcdefghijklmnopqrstuvwxyz';
+  for (const [n, v] of [[`${NAME_TOKEN}.token`, TOK_A], ['c.token', TOK_C], ['d.token', TOK_D]]) { fs.writeFileSync(path.join(op, n), v); fs.chmodSync(path.join(op, n), 0o600); }
+  fs.writeFileSync(path.join(g, `${NAME_TOKEN}.json`), '{}');
+  fs.writeFileSync(path.join(g, 'token-tot.json'), JSON.stringify({ refresh_token: `RT-tot-${GEHEIM}`, client_id: 'cid', client_secret: `CS-${GEHEIM}` }));
+  const exec = (cmd, args, opts, cb) => {
+    const tok = opts.env.OP_SERVICE_ACCOUNT_TOKEN;
+    let r;
+    if (tok === TOK_C) r = args[0] === 'whoami' ? { stdout: JSON.stringify({ user_type: 'SERVICE_ACCOUNT', url: TOK_C }) } : { stdout: JSON.stringify([{ id: 'x', name: TOK_C }]) };
+    else if (tok === TOK_D) r = { err: Object.assign(new Error('Command failed'), { code: 1 }), stderr: `[ERROR] 2026/11/25 10:00:00 vault ${VAULT_ID} failed: ${GEHEIM}` };
+    else r = args[0] === 'whoami' ? { stdout: JSON.stringify({ user_type: 'SERVICE_ACCOUNT' }) } : { stdout: JSON.stringify([{ id: 'x', name: 'ai-ads' }]) };
+    queueMicrotask(() => cb(r.err ?? null, Buffer.from(r.stdout ?? ''), Buffer.from(r.stderr ?? '')));
+  };
+  // Google spiegelt Zugangsdaten in einer langen Fehlerantwort zurück
+  const fetchImpl = async () => ({ ok: false, status: 400, json: async () => ({ error: 'invalid_grant', error_description: `${'x'.repeat(180)} 1//0${GEHEIM} CS-${GEHEIM}` }) });
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: op, GOOGLE_CONFIG_DIR: g }, opExec: exec, fetchImpl });
+  assert.equal(r.code, 0, r.err);
+  for (const w of [GEHEIM, 'ops_', VAULT_ID, '1//']) assert.ok(!r.out.includes(w), `Ausgabe enthält ${w}`);
+  const ops = nachName(r.json.onepassword.dateien);
+  assert.match(ops['c.token'].fehler, /keine (Tresorliste|Kontoangabe)/);
+  assert.match(ops['d.token'].fehler, /op meldet einen Fehler/);
+  assert.match(nachName(r.json.google.dateien)['token-tot.json'].fehler, /invalid_grant/);
+});
+
+test('access --check: oauth-client.json als FIFO hält den Lauf nicht an; unlesbare Dateien mit Grund', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const g = tmpDir('inv-g3-', t);
+  fs.writeFileSync(path.join(g, 'token-ohne-client.json'), JSON.stringify({ refresh_token: `RT-${GEHEIM}` }));
+  fs.writeFileSync(path.join(g, 'kaputt.json'), '{');
+  execFileSync('mkfifo', [path.join(g, 'oauth-client.json')]);
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: path.join(g, 'fehlt'), GOOGLE_CONFIG_DIR: g }, opExec: opFake().exec, fetchImpl: google().f });
+  assert.equal(r.code, 0, r.err);
+  const gs = nachName(r.json.google.dateien);
+  assert.match(gs['token-ohne-client.json'].fehler, /oauth-client\.json/);
+  assert.equal(gs['oauth-client.json'].art, 'sonstiges');
+  assert.equal(gs['kaputt.json'].typ, 'unlesbar');
+  assert.match(gs['kaputt.json'].grund, /kein gültiges JSON/);
 });

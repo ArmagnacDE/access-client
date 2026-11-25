@@ -319,11 +319,13 @@ async function cmdAccess(rest, opt, deps) {
   const fremd = Object.keys(opt).filter((k) => k !== 'check');
   if (rest.length || fremd.length) throw new AccessReadError('access [--check]', { usage: true });
   const check = Boolean(opt.check);
-  return {
+  // Jeder String der Ausgabe durch redact, auch Pfade und Namen (ein Dateiname kann wie ein Token aussehen).
+  const sauber = (x) => (typeof x === 'string' ? redact(x) : Array.isArray(x) ? x.map(sauber) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, sauber(v)])) : x);
+  return sauber({
     hinweis: HINWEIS_ACCESS,
     onepassword: await onePasswordInventory({ check, env: deps.env, exec: deps.opExec, redact }),
     google: await googleInventory({ check, env: deps.env, fetchImpl: deps.fetchImpl, redact }),
-  };
+  });
 }
 
 /**

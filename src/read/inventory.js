@@ -8,8 +8,10 @@
 //   sich mit einem Lese-Scope an (prüft, ob der Schlüssel gilt). Ihre Delegierung steht nur in der Admin-Konsole.
 //
 // Nie Werte: kein Token, kein Refresh-Token, kein Client-Secret, kein Schlüssel, keine Tresor-IDs. Ausgegeben werden
-// Dateinamen, Rechte, Typ, die Adresse eines Dienstkontos, Tresornamen und Scope-Namen. Fehlertexte laufen durch
-// redact (cli.js) bzw. die Schwärzung von op-read.
+// Dateinamen, Rechte, Typ, die Adresse eines Dienstkontos, Tresornamen und Scope-Namen. Fehler von op und Google gehen
+// nur als feste Meldung hinaus (Kategorie bzw. bekannter OAuth-Fehlercode), nie als freier Text: op-stderr kann
+// Tresor-IDs nennen, Google-Fehlerantworten Zugangsdaten zurückspiegeln (Codex-Befunde zu S110). Zusätzlich läuft jeder
+// String der Ausgabe durch redact (cli.js), auch Pfade.
 
 import { closeSync, constants as FS, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -46,15 +48,56 @@ function eintraege(ordner, uid) {
 /** Kurzname eines Scopes (ohne https://www.googleapis.com/auth/). */
 const kurz = (s) => (s.startsWith(AUTH) ? s.slice(AUTH.length) : s);
 
-/** JSON einer Credential-Datei lesen, ohne Symlinks zu folgen; nie Inhalt in eine Meldung. */
+/** JSON einer Credential-Datei lesen, ohne Symlinks zu folgen, nicht blockierend, höchstens MAX_JSON Byte; nie Inhalt in
+ *  eine Meldung. @returns {{ j: any, grund: string|null }} */
 function leseJson(datei) {
   let fd;
   try {
-    fd = openSync(datei, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK);
+    try { fd = openSync(datei, FS.O_RDONLY | FS.O_NOFOLLOW | FS.O_NONBLOCK); } catch (e) {
+      return { j: null, grund: e?.code === 'ELOOP' ? 'Symlink' : `nicht lesbar (${e?.code ?? 'Fehler'})` };
+    }
     const st = fstatSync(fd);
-    if (!st.isFile() || st.size > MAX_JSON) return null;
-    return JSON.parse(readFileSync(fd, 'utf8'));
-  } catch { return null; } finally { if (fd != null) try { closeSync(fd); } catch { /* zu */ } }
+    if (!st.isFile()) return { j: null, grund: 'keine reguläre Datei' };
+    if (st.size > MAX_JSON) return { j: null, grund: `größer als ${MAX_JSON / 1024} KiB` };
+    try { return { j: JSON.parse(readFileSync(fd, 'utf8')), grund: null }; } catch { return { j: null, grund: 'kein gültiges JSON' }; }
+  } finally { if (fd != null) try { closeSync(fd); } catch { /* zu */ } }
+}
+
+// Bekannte OAuth-Fehlercodes (RFC 6749 und Google); nur diese gehen aus einer Google-Fehlerantwort in die Ausgabe.
+const OAUTH_CODES = /\b(invalid_grant|invalid_client|unauthorized_client|invalid_scope|invalid_request|unsupported_grant_type|access_denied|deleted_client|disabled_client|org_internal|admin_policy_enforced|invalid_token)\b/;
+
+/** Google-Fehler als feste Meldung: Art des Schritts und höchstens ein bekannter Fehlercode, nie der freie Text. */
+export function googleFehler(e) {
+  const m = String(e?.message ?? '');
+  const code = OAUTH_CODES.exec(m)?.[1];
+  if (/nicht erreichbar/.test(m)) return 'Google: Endpunkt nicht erreichbar';
+  if (/tokeninfo|keine Scopes/.test(m)) return 'Google: Scopes nicht abfragbar';
+  if (/nicht lesbar|refresh_token fehlt|kein gültiges JSON|private_key/.test(m) && !code) return 'Datei für die Anmeldung unbrauchbar';
+  return `Google: Anmeldung fehlgeschlagen${code ? ` (${code})` : ''}`;
+}
+
+// Feste Meldungen von op-read, die keinen fremden Text enthalten (Prozessfehler und Antwortprüfung).
+const OP_FEST = /(Zeitüberschreitung nach \d+ s|op-CLI nicht gefunden \(PATH\)|Ausgabe größer als \d+ Byte|Ausgabe zu groß|Fehlerausgabe zu groß|Antwort ist keine (Tresorliste|Kontoangabe)|Token fehlt oder hat keine gültige Form)/;
+
+/** op-Fehler als feste Meldung: eine feste Meldung von op-read oder eine Kategorie aus Stichworten, nie stderr-Text. */
+export function opFehler(e) {
+  const m = String(e?.message ?? '');
+  const fest = OP_FEST.exec(m)?.[1];
+  if (fest) return `1Password: ${fest}`;
+  const roh = `${m}\n${String(e?.opStderr ?? '')}`;
+  let art = 'Text nicht ausgegeben';
+  if (/rate limit|too many requests/i.test(roh)) art = 'Ratenlimit';
+  else if (/invalid|revoked|unauthori[sz]ed|authenticat|expired/i.test(roh)) art = 'Token ungültig oder widerrufen';
+  else if (/network|connection|dial tcp|no such host|tls|i\/o timeout|EOF/i.test(roh)) art = 'Netz';
+  return `1Password: op meldet einen Fehler (${art})`;
+}
+
+/** OAuth-Token-Datei ohne eigene client_id/client_secret: google-auth liest dann oauth-client.json; das vorher sicher
+ *  prüfen (keine FIFO, kein Symlink, Größe), sonst hinge ein readFileSync dort den ganzen Lauf auf. */
+function clientDateiOk(j, ordner) {
+  if (typeof j?.client_id === 'string' && typeof j?.client_secret === 'string') return true;
+  const oc = leseJson(join(ordner, 'oauth-client.json'));
+  return googleTyp(oc.j).typ === 'oauth-client';
 }
 
 /** Typ einer Google-Credential-Datei aus ihrem Aufbau; nur Typ und (bei Dienstkonten) die Adresse. */
@@ -94,7 +137,7 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
     try {
       d.konto = await opWhoami(o);
       d.tresore = await opVaultList(o);
-    } catch (e) { d.fehler = redact(String(e?.message ?? e)).slice(0, 300); }
+    } catch (e) { d.fehler = redact(opFehler(e)); }
   }
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }
@@ -112,10 +155,13 @@ export async function googleInventory({ check, env, fetchImpl, redact, uid = pro
     dateien.push(d);
     if (!st || !st.isFile()) continue;
     if (!datei.endsWith('.json')) { d.typ = 'keine JSON-Datei'; continue; }
-    Object.assign(d, googleTyp(leseJson(datei)));
+    const { j, grund } = leseJson(datei);
+    Object.assign(d, googleTyp(j));
+    if (grund) d.grund = grund;
     if (!check) continue;
     try {
       if (d.typ === 'oauth-token') {
+        if (!clientDateiOk(j, ordner)) { d.fehler = 'ohne client_id/client_secret und ohne brauchbare oauth-client.json daneben; nicht geprüft'; continue; }
         const accessToken = await getAccessTokenFromFile(datei, { fetchImpl });
         d.scopes = (await grantedScopesOf({ access_token: accessToken }, fetchImpl)).split(/\s+/).filter(Boolean).map(kurz).sort();
       } else if (d.typ === 'dienstkonto') {
@@ -123,7 +169,7 @@ export async function googleInventory({ check, env, fetchImpl, redact, uid = pro
         d.anmeldung = 'ok';
         d.scopes = 'je Anfrage; Delegierung nur in der Admin-Konsole sichtbar';
       }
-    } catch (e) { d.fehler = redact(String(e?.message ?? e)).slice(0, 300); }
+    } catch (e) { d.fehler = redact(googleFehler(e)); }
   }
   return { ordner, ...(fehler ? { fehler } : {}), dateien };
 }

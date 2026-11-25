@@ -271,9 +271,11 @@ export async function opItemOtp({ vault, itemId, token, exec = execFile, timeout
 /** vaultGet-Funktion für tresorSuche({ vaultGet }) mit festem Token. */
 export const vaultGetMit = (token, optionen = {}) => (vault) => opVaultGet({ ...optionen, vault, token });
 
-// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen.
+// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen, nichts,
+// das wie ein Service-Account-Token aussieht (Codex-Befund S110 (Diagnose Konten und Scopes): sonst ginge ein Token als
+// Tresorname oder URL in die Ausgabe).
 const AUSGABE_NAME = /^[^\u0000-\u001f\u007f]{1,200}$/;
-const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) ? x : null);
+const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) && !TOKENARTIG.test(x) ? x : null);
 
 /**
  * Tresore, die das Token sieht: `op vault list --format json`, davon nur die Namen (sortiert). Für die Diagnose

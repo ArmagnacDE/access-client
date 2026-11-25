@@ -161,8 +161,11 @@ function opAusfuehren(args, { token, exec, timeoutMs, maxBytes, path, home, was,
       // Das Ausgabelimit zuerst: execFile beendet den Kindprozess dabei selbst, ein Fehler mit killed/Signal ist dann
       // keine Zeitüberschreitung (S51). Aufrufer erkennen es an „Ausgabe zu groß“ (nicht wiederholen).
       let prozess = null;
-      if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') prozess = `Ausgabe zu groß (mehr als ${maxBytes} Byte)`;
-      else if (err.killed || err.code === 'ETIMEDOUT') prozess = `Zeitüberschreitung nach ${Math.round(timeoutMs / 1000)} s`;
+      // stdout und stderr haben je ein eigenes Limit; nur ein Überlauf auf stdout heißt „Ausgabe zu groß“ (der Wert ist zu
+      // groß, heilt nicht von selbst). Zu viel stderr (z. B. Fehlerseite eines Proxys) ist „Fehlerausgabe zu groß“.
+      if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+        prozess = /^stderr\b/.test(String(err.message ?? '')) ? `Fehlerausgabe zu groß (mehr als ${maxBytes} Byte)` : `Ausgabe zu groß (mehr als ${maxBytes} Byte)`;
+      } else if (err.killed || err.code === 'ETIMEDOUT') prozess = `Zeitüberschreitung nach ${Math.round(timeoutMs / 1000)} s`;
       else if (err.code === 'ENOENT') prozess = 'op-CLI nicht gefunden (PATH)';
       else if (err.signal) prozess = `op beendet durch ${String(err.signal).slice(0, 20)}`;
       else if (typeof err.code !== 'number') prozess = `op nicht ausführbar (${String(err.code ?? 'unbekannt').slice(0, 40)})`;

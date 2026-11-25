@@ -325,6 +325,16 @@ test('S51: Ausgabe-Limit mit killed (Prozess nach dem Limit beendet) ist keine Z
   assert.match(z.message, /Zeitüberschreitung nach 5 s$/);
 });
 
+test('S51 reviewer: Überlauf auf stderr heißt „Fehlerausgabe zu groß“, nicht „Ausgabe zu groß“ (Wert selbst ist nicht zu groß)', async () => {
+  const err = Object.assign(new RangeError('stderr maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+  const e = await opRead({ ref: 'op://v/x/y', token: TOKEN, exec: fake(() => ({ err })).exec }).catch((x) => x);
+  assert.equal(e.message, '1Password: Lesen fehlgeschlagen: Fehlerausgabe zu groß (mehr als 65536 Byte)');
+  const { execFile } = await import('node:child_process');
+  const echt = await opRead({ ref: 'op://v/x/y', token: TOKEN, maxBytes: 100,
+    exec: (cmd, args, opts, cb) => execFile(process.execPath, ['-e', 'process.stderr.write("x".repeat(1000))'], { ...opts, env: { ...opts.env, PATH: process.env.PATH } }, cb) }).catch((x) => x);
+  assert.match(echt.message, /: Fehlerausgabe zu groß \(mehr als 100 Byte\)$/);
+});
+
 test('Fable 11: echtes execFile (node als op-Ersatz): Umgebung, Zeitüberschreitung, Ausgabelimit, Exit-Code', async () => {
   const { execFile } = await import('node:child_process');
   const als = (skript) => (cmd, args, opts, cb) => execFile(process.execPath, ['-e', skript], { ...opts, env: { ...opts.env, PATH: process.env.PATH } }, cb);

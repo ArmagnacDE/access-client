@@ -89,7 +89,8 @@ const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
   `was` = `tresor`, `eintrag` oder `feld`, mehrere Treffer `OpItemAmbiguousError`, alles andere `OpReadError`.
   Eingeordnet wird nur bei normalem Exit-Code; Zeitüberschreitung, Signal oder Ausgabelimit sind immer ein Stopp.
   Das Ausgabelimit (`maxBytes`) meldet „Ausgabe zu groß (mehr als N Byte)“, nie „Zeitüberschreitung“, auch wenn der
-  Kindprozess dabei beendet wurde (ab v1.5.3); es heilt nicht von selbst, Aufrufer wiederholen es nicht.
+  Kindprozess dabei beendet wurde (ab v1.5.3); es heilt nicht von selbst, Aufrufer wiederholen es nicht. Zu viel
+  stderr heißt „Fehlerausgabe zu groß (mehr als N Byte)“ (eigenes Limit, der Wert selbst ist nicht zu groß).
   Die übergebenen Namen werden vor der Einordnung aus der Meldung entfernt, damit ein Name wie „isn't a vault …“
   nichts verschiebt.
 - `opVaultGet({ vault, token })` → `{ id, name }`; `vaultGetMit(token)` passt als `vaultGet` für `tresorSuche`.

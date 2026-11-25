@@ -270,3 +270,41 @@ export async function opItemOtp({ vault, itemId, token, exec = execFile, timeout
 
 /** vaultGet-Funktion für tresorSuche({ vaultGet }) mit festem Token. */
 export const vaultGetMit = (token, optionen = {}) => (vault) => opVaultGet({ ...optionen, vault, token });
+
+// Ein Name aus einer op-Antwort, der ausgegeben werden darf: Text ohne Steuerzeichen, höchstens 200 Zeichen. Enthält er
+// die Form eines Service-Account-Tokens (ops_ + mindestens 20 Zeichen), geht er nicht hinaus (Codex-Befund S110
+// (Diagnose Konten und Scopes)); kurze Formen wie „Shops_Archiv“ bleiben (reviewer-Befund).
+const AUSGABE_NAME = /^[^\u0000-\u001f\u007f]{1,200}$/;
+const TOKEN_WERT = /ops_[A-Za-z0-9_\-.=+/]{20,}/;
+const ausgabeText = (x) => (typeof x === 'string' && AUSGABE_NAME.test(x) && !TOKEN_WERT.test(x) ? x : null);
+export const NAME_VERDECKT = '[Name nicht ausgegeben]';
+
+/**
+ * Tresore, die das Token sieht: `op vault list --format json`, davon nur die Namen (sortiert). Für die Diagnose
+ * (access-read access --check, S110 (Diagnose Konten und Scopes)); liest keine Einträge.
+ * @returns {Promise<string[]>}
+ */
+export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['vault', 'list', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 256 * 1024, path, home, was: 'Tresorliste', namen: [] });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  // Ein tokenartiger Name wird einzeln verdeckt, die übrigen bleiben; Unlesbares (kein Text, Steuerzeichen) ist ein Fehler.
+  const namen = Array.isArray(j) ? j.map((v) => (typeof v?.name === 'string' && AUSGABE_NAME.test(v.name) ? (ausgabeText(v.name) ?? NAME_VERDECKT) : null)) : null;
+  if (!namen || namen.some((n) => n == null)) throw new OpReadError('1Password: Antwort ist keine Tresorliste');
+  return namen.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Wer ist das Token: `op whoami --format json`, davon nur Typ (z. B. SERVICE_ACCOUNT), Adresse und Konto-URL.
+ * @returns {Promise<{ typ: string, email: string|null, url: string|null }>}
+ */
+export async function opWhoami({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['whoami', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [] });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  const typ = j && !Array.isArray(j) ? ausgabeText(j.user_type) : null;
+  if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
+  return { typ, email: ausgabeText(j.email), url: ausgabeText(j.url) };
+}

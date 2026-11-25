@@ -1,7 +1,7 @@
 // opRead / opVaultGet (src/op-read.js) mit Fake-exec: kein echtes op, kein Netz.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { opRead, opVaultGet, opItemHead, opItemOtp, vaultGetMit, pruefeVerweis, schwaerze, opUmgebung, einordnen, OpReadError, OpItemMissingError, OpItemAmbiguousError } from '../src/op-read.js';
+import { opRead, opVaultGet, opVaultList, opWhoami, opItemHead, opItemOtp, vaultGetMit, pruefeVerweis, schwaerze, opUmgebung, einordnen, OpReadError, OpItemMissingError, OpItemAmbiguousError } from '../src/op-read.js';
 import { tresorSuche } from '../src/op-vault.js';
 
 const TOKEN = 'ops_' + 'A'.repeat(40);
@@ -349,4 +349,36 @@ test('Fable 11: echtes execFile (node als op-Ersatz): Umgebung, Zeitüberschreit
   const fehlt = await opRead({ ref: 'op://v/x/y', token: TOKEN, exec: als('process.stderr.write("[ERROR] 2026/11/15 10:00:00 \\"x\\" isn\'t an item in the \\"v\\" vault.\\n"); process.exit(1)') }).catch((x) => x);
   assert.ok(fehlt instanceof OpItemMissingError);
   assert.equal(fehlt.was, 'eintrag');
+});
+
+// S110 (Diagnose Konten und Scopes): Tresorliste und Kontoangabe eines Service-Account-Tokens, nur Namen.
+test('opVaultList: argv vault list --format json, nur Namen (sortiert), keine IDs oder weiteren Felder', async () => {
+  const f = fake(() => ({ stdout: JSON.stringify([
+    { id: 'abcdefghijklmnopqrstuvwxyz', name: 'ai-zwei', content_version: 3, items: 4 },
+    { id: 'bbcdefghijklmnopqrstuvwxyz', name: 'ai-eins', content_version: 1 },
+  ]) }));
+  const r = await opVaultList({ token: TOKEN, exec: f.exec, home: '/home/test' });
+  assert.deepEqual(r, ['ai-eins', 'ai-zwei']);
+  assert.deepEqual(f.aufrufe[0].args, ['vault', 'list', '--format', 'json']);
+  assert.deepEqual(f.aufrufe[0].opts.env, { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/home/test', OP_SERVICE_ACCOUNT_TOKEN: TOKEN });
+});
+
+test('opVaultList: kein JSON-Array, Namen mit Steuerzeichen oder op-Fehler → OpReadError ohne Token', async () => {
+  await assert.rejects(opVaultList({ token: TOKEN, exec: fake(() => ({ stdout: '{"a":1}' })).exec }), /keine Tresorliste/);
+  await assert.rejects(opVaultList({ token: TOKEN, exec: fake(() => ({ stdout: 'kaputt' })).exec }), /keine Tresorliste/);
+  await assert.rejects(opVaultList({ token: TOKEN, exec: fake(() => ({ stdout: JSON.stringify([{ id: 'x', name: 'a\nb' }]) })).exec }), /keine Tresorliste/);
+  const e = await opVaultList({ token: TOKEN, exec: fake(() => ({ err: fehler(), stderr: `[ERROR] 2026/11/24 10:00:00 invalid token ${TOKEN}` })).exec }).catch((x) => x);
+  assert.ok(e instanceof OpReadError);
+  assert.ok(!e.message.includes(TOKEN));
+  const f = fake(() => ({ stdout: '[]' }));
+  await assert.rejects(opVaultList({ token: 'kein-token', exec: f.exec }), OpReadError);
+  assert.equal(f.aufrufe.length, 0);
+});
+
+test('opWhoami: argv whoami --format json, nur Typ, Adresse und Konto-URL', async () => {
+  const f = fake(() => ({ stdout: JSON.stringify({ url: 'https://beispiel.1password.eu', email: 'abc@beispiel.1passwordserviceaccounts.eu', user_uuid: 'U1', account_uuid: 'A1', user_type: 'SERVICE_ACCOUNT' }) }));
+  const r = await opWhoami({ token: TOKEN, exec: f.exec });
+  assert.deepEqual(r, { typ: 'SERVICE_ACCOUNT', email: 'abc@beispiel.1passwordserviceaccounts.eu', url: 'https://beispiel.1password.eu' });
+  assert.deepEqual(f.aufrufe[0].args, ['whoami', '--format', 'json']);
+  await assert.rejects(opWhoami({ token: TOKEN, exec: fake(() => ({ stdout: '[]' })).exec }), /keine Kontoangabe/);
 });

@@ -146,7 +146,7 @@ export function einordnen(stderr, namen = []) {
  * op ausführen. Liefert stdout als Buffer; wirft OpItemMissingError, OpItemAmbiguousError bzw. OpReadError.
  * @param {string[]} args  geprüfte Argumente
  */
-function opAusfuehren(args, { token, exec, timeoutMs, maxBytes, path, home, was, namen }) {
+function opAusfuehren(args, { token, exec, timeoutMs, maxBytes, path, home, was, namen, killSignal = 'SIGTERM' }) {
   return new Promise((resolve, reject) => {
     let fertig = false;
     const cb = (err, stdout, stderr) => {
@@ -182,7 +182,7 @@ function opAusfuehren(args, { token, exec, timeoutMs, maxBytes, path, home, was,
       reject(e);
     };
     try {
-      exec('op', args, { env: opUmgebung(token, { path, home }), encoding: 'buffer', timeout: timeoutMs, maxBuffer: maxBytes, windowsHide: true }, cb);
+      exec('op', args, { env: opUmgebung(token, { path, home }), encoding: 'buffer', timeout: timeoutMs, killSignal, maxBuffer: maxBytes, windowsHide: true }, cb);
     } catch (e) {
       cb(Object.assign(new Error('spawn'), { code: e?.code ?? 'Fehler' }), null, '');
     }
@@ -284,9 +284,9 @@ export const NAME_VERDECKT = '[Name nicht ausgegeben]';
  * (access-read access --check, S110 (Diagnose Konten und Scopes)); liest keine Einträge.
  * @returns {Promise<string[]>}
  */
-export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, path, home, killSignal } = {}) {
   pruefeToken(token);
-  const out = await opAusfuehren(['vault', 'list', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 256 * 1024, path, home, was: 'Tresorliste', namen: [] });
+  const out = await opAusfuehren(['vault', 'list', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 256 * 1024, path, home, was: 'Tresorliste', namen: [], killSignal });
   let j = null;
   try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
   // Ein tokenartiger Name wird einzeln verdeckt, die übrigen bleiben; Unlesbares (kein Text, Steuerzeichen) ist ein Fehler.
@@ -299,12 +299,28 @@ export async function opVaultList({ token, exec = execFile, timeoutMs = 30_000, 
  * Wer ist das Token: `op whoami --format json`, davon nur Typ (z. B. SERVICE_ACCOUNT), Adresse und Konto-URL.
  * @returns {Promise<{ typ: string, email: string|null, url: string|null }>}
  */
-export async function opWhoami({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+export async function opWhoami({ token, exec = execFile, timeoutMs = 30_000, path, home, killSignal } = {}) {
   pruefeToken(token);
-  const out = await opAusfuehren(['whoami', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [] });
+  const out = await opAusfuehren(['whoami', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [], killSignal });
   let j = null;
   try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
   const typ = j && !Array.isArray(j) ? ausgabeText(j.user_type) : null;
   if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
   return { typ, email: ausgabeText(j.email), url: ausgabeText(j.url) };
+}
+
+/**
+ * Name des Kontos hinter dem Token: `op user get --me --format json`, davon nur Name, Typ und Status. `op whoami` nennt
+ * den Namen eines Service Accounts nicht (S146 (access-read access: schneller und Register-Lücken)).
+ * @returns {Promise<{ name: string|null, typ: string, status: string|null }>}
+ */
+export async function opSelf({ token, exec = execFile, timeoutMs = 30_000, path, home, killSignal } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['user', 'get', '--me', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [], killSignal });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  const typ = j && !Array.isArray(j) ? ausgabeText(j.type) : null;
+  if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
+  const name = typeof j.name === 'string' && AUSGABE_NAME.test(j.name) ? (ausgabeText(j.name) ?? NAME_VERDECKT) : null;
+  return { name, typ, status: ausgabeText(j.state) };
 }

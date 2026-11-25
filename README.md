@@ -100,6 +100,8 @@ const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
   in zwei Schreibweisen vor: `opItemHead` als `holen` für `einEintrag`, erst danach lesen.
 - `opVaultList({ token })` → Tresornamen, die das Token sieht (sortiert, ohne IDs); `opWhoami({ token })` →
   `{ typ, email, url }` (z. B. `SERVICE_ACCOUNT`). Beide für die Diagnose `access-read access --check` (ab v1.6.0).
+- `opSelf({ token })` → `{ name, typ, status }` aus `op user get --me` (ab v1.7.0): der Name des Service Accounts, den
+  `op whoami` nicht nennt; ein tokenartiger Name erscheint als `[Name nicht ausgegeben]`.
 - `opItemOtp({ vault, itemId, token })` → `Buffer` mit dem aktuellen Einmal-Code (nur Ziffern), nur über die
   Eintrags-ID aus `opItemHead`.
 - Nur für Text-Geheimnisse: `op read` gibt Binärdateien verfälscht aus.
@@ -147,8 +149,9 @@ Client-Secret, Schlüssel, keine Tresor-IDs oder Eintragsinhalte). Braucht keine
 
 - `~/.config/op/` (ersetzbar mit `ACCESS_OP_DIR`): je Datei Pfad, Rechte, Eigentum und ob `op-token` sie nimmt
   (`*.token`, Rechte genau 600, eigener Benutzer, kein Symlink; sonst `grund`). Mit `--check` je brauchbarem
-  Token `konto` (`op whoami`: Typ, Adresse, Konto-URL) und `tresore` (`op vault list`, nur Namen), beides über
-  `op-read`. Einträge liest der Befehl nie.
+  Token `konto` (`op whoami`: Typ, Adresse, Konto-URL), ab v1.7.0 `name` (Name des Service Accounts, `op user get
+  --me`; Fehler unter `nameFehler`) und `tresore` (`op vault list`, nur Namen), alles über `op-read`. Einträge liest
+  der Befehl nie.
 - `~/.config/gsheets/` (ersetzbar mit `GOOGLE_CONFIG_DIR`): je Datei Rechte und Typ (`oauth-token`,
   `dienstkonto` mit Adresse, `oauth-client`, `unlesbar`, `keine JSON-Datei`). Mit `--check`: Token-Dateien werden
   erneuert, `scopes` meldet Google (tokeninfo); Dienstkonten melden sich mit `spreadsheets.readonly` an
@@ -159,6 +162,11 @@ Client-Secret, Schlüssel, keine Tresor-IDs oder Eintragsinhalte). Braucht keine
 - Ein tokenartiger Tresorname erscheint als `[Name nicht ausgegeben]`. Aufgefrischt wird nur gegen Googles
   Token-Endpunkt (fremde `token_uri`: nicht geprüft) und nur, wenn `oauth-client.json` im selben Ordner liegt, den auch
   `google-auth` liest. op-Aufrufe haben hier 15 s Zeitlimit.
+- **Gleichzeitig, mit Gesamtzeitlimit (ab v1.7.0):** 1Password und Google laufen gleichzeitig, je Bereich höchstens 8
+  Prüfungen auf einmal, `op whoami` und `op vault list` eines Tokens parallel. Nach 30 s (`zeitlimitSekunden` in der
+  Ausgabe) endet der Lauf: Was bis dahin nicht fertig ist, hat `fehler: "Gesamtzeitlimit überschritten; nicht fertig
+  geprüft"` und keine Teilergebnisse; Google-Aufrufe werden abgebrochen, op-Aufrufe bekommen höchstens die Restzeit.
+  Gemessen auf claude (25.11.2026, 11 Tokens, 10 Google-Dateien): vorher 6,6–9,9 s, nachher 1,1 s, gleiche Ausgabe.
 
 ### Konfiguration
 
@@ -330,6 +338,8 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
 - neu (v1.6.0) `access-read access [--check]` (Diagnose der Zugänge, S110 (Diagnose Konten und Scopes)) und in `op-read` `opVaultList`, `opWhoami`.
+- v1.7.0: `access-read access --check` prüft gleichzeitig mit Gesamtzeitlimit 30 s und zeigt den Namen des Service
+  Accounts (`opSelf`) (S146 (access-read access: schneller und Register-Lücken)).
 - neu (v1.5.2) `--remove-old`/`--restore` in `scripts/security-label.mjs` (`gmail-filter-cleanup`).
 - neu (v1.5.1) `scripts/read-token.mjs` mit `token-setup` (README „Tokens erzeugen“); Merkmal „two-step“ nur noch als
   „two-step authentication“ (S137: „Two-step distillation“ war gesperrt); dazu „two-step verification“, „two-step login“,

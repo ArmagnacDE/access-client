@@ -1,7 +1,7 @@
 // opRead / opVaultGet (src/op-read.js) mit Fake-exec: kein echtes op, kein Netz.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { opRead, opVaultGet, opVaultList, opWhoami, opItemHead, opItemOtp, vaultGetMit, pruefeVerweis, schwaerze, opUmgebung, einordnen, OpReadError, OpItemMissingError, OpItemAmbiguousError } from '../src/op-read.js';
+import { opRead, opVaultGet, opVaultList, opWhoami, opSelf, opItemHead, opItemOtp, vaultGetMit, pruefeVerweis, schwaerze, opUmgebung, einordnen, OpReadError, OpItemMissingError, OpItemAmbiguousError } from '../src/op-read.js';
 import { tresorSuche } from '../src/op-vault.js';
 
 const TOKEN = 'ops_' + 'A'.repeat(40);
@@ -381,4 +381,14 @@ test('opWhoami: argv whoami --format json, nur Typ, Adresse und Konto-URL', asyn
   assert.deepEqual(r, { typ: 'SERVICE_ACCOUNT', email: 'abc@beispiel.1passwordserviceaccounts.eu', url: 'https://beispiel.1password.eu' });
   assert.deepEqual(f.aufrufe[0].args, ['whoami', '--format', 'json']);
   await assert.rejects(opWhoami({ token: TOKEN, exec: fake(() => ({ stdout: '[]' })).exec }), /keine Kontoangabe/);
+});
+
+// S146 (access-read access: schneller und Register-Lücken): den Namen des Service Accounts nennt op whoami nicht.
+test('opSelf: argv user get --me --format json, nur Name, Typ und Status; tokenartiger Name verdeckt', async () => {
+  const f = fake(() => ({ stdout: JSON.stringify({ id: 'U1', name: 'armagnac-claude', email: 'x@beispiel.1passwordserviceaccounts.eu', type: 'SERVICE_ACCOUNT', state: 'ACTIVE', created_at: 'z' }) }));
+  assert.deepEqual(await opSelf({ token: TOKEN, exec: f.exec }), { name: 'armagnac-claude', typ: 'SERVICE_ACCOUNT', status: 'ACTIVE' });
+  assert.deepEqual(f.aufrufe[0].args, ['user', 'get', '--me', '--format', 'json']);
+  const g = fake(() => ({ stdout: JSON.stringify({ name: `ops_${'X'.repeat(30)}`, type: 'SERVICE_ACCOUNT' }) }));
+  assert.equal((await opSelf({ token: TOKEN, exec: g.exec })).name, '[Name nicht ausgegeben]');
+  await assert.rejects(opSelf({ token: TOKEN, exec: fake(() => ({ stdout: '[]' })).exec }), /keine Kontoangabe/);
 });

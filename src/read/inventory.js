@@ -2,7 +2,7 @@
 //
 // Zeigt je Datei unter ~/.config/op/ (1Password-Service-Account-Tokens) und ~/.config/gsheets/ (Google-Credentials):
 // Pfad, Rechte, Eigentum, Art. Mit --check zusätzlich, was jeder Zugang erreicht:
-// - 1Password: Kontoangabe (op whoami) und Tresornamen (op vault list), beides über op-read; gelesen wird ein Token nur
+// - 1Password: Kontoangabe (op whoami), Name des Service Accounts (op user get --me) und Tresornamen (op vault list), beides über op-read; gelesen wird ein Token nur
 //   über op-token (Rechte genau 600, eigener Benutzer, kein Symlink). Einträge liest der Befehl nie.
 // - Google: Token-Dateien (refresh_token) werden erneuert, die Scopes meldet Google (tokeninfo); Dienstkonten melden
 //   sich mit einem Lese-Scope an (prüft, ob der Schlüssel gilt). Ihre Delegierung steht nur in der Admin-Konsole.
@@ -17,7 +17,7 @@ import { closeSync, constants as FS, fstatSync, lstatSync, openSync, readdirSync
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configDir, getAccessTokenFromFile, getServiceAccountToken, grantedScopesOf } from '../google-auth.js';
-import { opVaultList, opWhoami } from '../op-read.js';
+import { opSelf, opVaultList, opWhoami } from '../op-read.js';
 import { OpTokenError, waehleToken } from '../op-token.js';
 
 const AUTH = 'https://www.googleapis.com/auth/';
@@ -179,6 +179,8 @@ export async function onePasswordInventory({ check, env, exec, redact, uid = pro
       const o = { token, timeoutMs: Math.max(1, Math.min(OP_TIMEOUT_MS, f.rest())), ...(exec ? { exec } : {}) };
       await Promise.all([
         opWhoami(o).then((k) => { teil.konto = k; }, (e) => { teil.kontoFehler = redact(opFehler(e)); }),
+        // Name des Service Accounts (op whoami nennt ihn nicht); Fehler einzeln, kostet die übrigen Angaben nicht.
+        opSelf(o).then((k) => { teil.name = k.name; }, (e) => { teil.nameFehler = redact(opFehler(e)); }),
         opVaultList(o).then((t) => { teil.tresore = t; }, (e) => { teil.fehler = redact(opFehler(e)); }),
       ]);
     }));

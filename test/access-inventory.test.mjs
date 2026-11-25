@@ -46,6 +46,7 @@ function opFake() {
     const tresore = { [TOK_A]: ['ai-ads'], [TOK_B]: ['ai-zwei', 'ai-eins'] }[token];
     let r;
     if (!tresore) r = { err: Object.assign(new Error('Command failed'), { code: 1 }), stderr: `[ERROR] 2026/11/24 10:00:00 Invalid service account token ${token}` };
+    else if (args[0] === 'user' && args[2] === '--me') r = { stdout: JSON.stringify({ id: 'U', name: `sa-${tresore[0]}`, type: 'SERVICE_ACCOUNT', state: 'ACTIVE' }) };
     else if (args[0] === 'whoami') r = { stdout: JSON.stringify({ url: 'https://beispiel.1password.eu', email: `${tresore[0]}@x.1passwordserviceaccounts.eu`, user_type: 'SERVICE_ACCOUNT', user_uuid: 'U' }) };
     else if (args[0] === 'vault' && args[1] === 'list') r = { stdout: JSON.stringify(tresore.map((name, i) => ({ id: `id${i}${GEHEIM}`, name }))) };
     else r = { err: Object.assign(new Error('x'), { code: 1 }), stderr: '[ERROR] unerwartet' };
@@ -135,11 +136,12 @@ test('access --check: Tresore je Token über op-read, Scopes je Google-Token, Fe
   assert.deepEqual(ops['ai-ads.token'].tresore, ['ai-ads']);
   assert.deepEqual(ops['james.token'].tresore, ['ai-eins', 'ai-zwei']);
   assert.deepEqual(ops['james.token'].konto, { typ: 'SERVICE_ACCOUNT', email: 'ai-zwei@x.1passwordserviceaccounts.eu', url: 'https://beispiel.1password.eu' });
+  assert.equal(ops['james.token'].name, 'sa-ai-zwei', 'Name des Service Accounts (op user get --me)');
   assert.match(ops['kaputt.token'].fehler, /Token ungültig oder widerrufen/);
   assert.equal(ops['customs.token'].tresore, undefined, 'unbrauchbare Datei: kein op-Aufruf');
-  // op nur für die drei brauchbaren Dateien, nur whoami und vault list
+  // op nur für die drei brauchbaren Dateien, nur whoami, user get --me und vault list
   assert.deepEqual([...new Set(o.aufrufe.map((a) => a.token))].sort(), [TOK_A, TOK_B, TOK_KAPUTT].sort());
-  for (const a of o.aufrufe) assert.ok(a.args[0] === 'whoami' || (a.args[0] === 'vault' && a.args[1] === 'list'), a.args.join(' '));
+  for (const a of o.aufrufe) assert.ok(a.args[0] === 'whoami' || (a.args[0] === 'vault' && a.args[1] === 'list') || a.args.join(' ') === 'user get --me --format json', a.args.join(' '));
   const gs = nachName(r.json.google.dateien);
   assert.deepEqual(gs['token.json'].scopes, ['drive', 'gmail.modify']);
   assert.deepEqual(gs['token-read-shop.json'].scopes, ['drive.readonly', 'gmail.readonly']);

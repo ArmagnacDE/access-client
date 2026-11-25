@@ -308,3 +308,19 @@ export async function opWhoami({ token, exec = execFile, timeoutMs = 30_000, pat
   if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
   return { typ, email: ausgabeText(j.email), url: ausgabeText(j.url) };
 }
+
+/**
+ * Name des Kontos hinter dem Token: `op user get --me --format json`, davon nur Name, Typ und Status. `op whoami` nennt
+ * den Namen eines Service Accounts nicht (S146 (access-read access: schneller und Register-Lücken)).
+ * @returns {Promise<{ name: string|null, typ: string, status: string|null }>}
+ */
+export async function opSelf({ token, exec = execFile, timeoutMs = 30_000, path, home } = {}) {
+  pruefeToken(token);
+  const out = await opAusfuehren(['user', 'get', '--me', '--format', 'json'], { token, exec, timeoutMs, maxBytes: 64 * 1024, path, home, was: 'Kontoabfrage', namen: [] });
+  let j = null;
+  try { j = JSON.parse(out.toString('utf8')); } catch { /* feste Meldung unten */ }
+  const typ = j && !Array.isArray(j) ? ausgabeText(j.type) : null;
+  if (!typ) throw new OpReadError('1Password: Antwort ist keine Kontoangabe');
+  const name = typeof j.name === 'string' && AUSGABE_NAME.test(j.name) ? (ausgabeText(j.name) ?? NAME_VERDECKT) : null;
+  return { name, typ, status: ausgabeText(j.state) };
+}

@@ -320,7 +320,8 @@ async function cmdAccess(rest, opt, deps) {
   if (rest.length || fremd.length) throw new AccessReadError('access [--check]', { usage: true });
   const check = Boolean(opt.check);
   // Jeder String der Ausgabe durch redact, auch Pfade und Namen (ein Dateiname kann wie ein Token aussehen).
-  const sauber = (x) => (typeof x === 'string' ? redact(x) : Array.isArray(x) ? x.map(sauber) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, sauber(v)])) : x);
+  // redact verlangt vor ops_ eine Wortgrenze; hier auch mitten im Namen („backup_ops_…“).
+  const sauber = (x) => (typeof x === 'string' ? redact(x).replace(/ops_[A-Za-z0-9_\-.=+/]{8,}/g, '[entfernt]') : Array.isArray(x) ? x.map(sauber) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, sauber(v)])) : x);
   return sauber({
     hinweis: HINWEIS_ACCESS,
     onepassword: await onePasswordInventory({ check, env: deps.env, exec: deps.opExec, redact }),

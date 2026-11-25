@@ -210,3 +210,30 @@ test('access --check: oauth-client.json als FIFO hält den Lauf nicht an; unlesb
   assert.equal(gs['kaputt.json'].typ, 'unlesbar');
   assert.match(gs['kaputt.json'].grund, /kein gültiges JSON/);
 });
+
+// Codex-Folgerunde (S110 (Diagnose Konten und Scopes)): ops_ ohne Wortgrenze, leere client-Felder, flache oauth-client.json.
+test('access: ops_ mitten im Namen geschwärzt; leere client-Felder prüfen oauth-client.json; flache oauth-client.json gilt', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const g = tmpDir('inv-g4-', t);
+  const NAME = `backup_ops_${'Q'.repeat(30)}.json`;
+  fs.writeFileSync(path.join(g, NAME), '{}');
+  fs.writeFileSync(path.join(g, 'token-leer.json'), JSON.stringify({ refresh_token: `RT-${GEHEIM}`, client_id: '', client_secret: '' }));
+  execFileSync('mkfifo', [path.join(g, 'oauth-client.json')]);
+  const r = await call(['access', '--check'], { env: { ACCESS_OP_DIR: path.join(g, 'fehlt'), GOOGLE_CONFIG_DIR: g }, opExec: opFake().exec, fetchImpl: google().f });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(!r.out.includes('Q'.repeat(30)), 'Name mit ops_ geschwärzt');
+  assert.match(nachName(r.json.google.dateien)['token-leer.json'].fehler, /oauth-client\.json/);
+
+  const g2 = tmpDir('inv-g5-', t);
+  fs.writeFileSync(path.join(g2, 'token-ohne-client.json'), JSON.stringify({ refresh_token: `RT-lesen-${GEHEIM}` }));
+  fs.writeFileSync(path.join(g2, 'oauth-client.json'), JSON.stringify({ client_id: 'cid', client_secret: `CS-${GEHEIM}` }));
+  const alt = process.env.GOOGLE_CONFIG_DIR;
+  process.env.GOOGLE_CONFIG_DIR = g2;   // google-auth liest oauth-client.json aus process.env
+  try {
+    const r2 = await call(['access', '--check'], { env: { ACCESS_OP_DIR: path.join(g2, 'fehlt'), GOOGLE_CONFIG_DIR: g2 }, opExec: opFake().exec, fetchImpl: google().f });
+    const gs = nachName(r2.json.google.dateien);
+    assert.equal(gs['oauth-client.json'].typ, 'oauth-client');
+    assert.deepEqual(gs['token-ohne-client.json'].scopes, ['drive.readonly', 'gmail.readonly']);
+    assert.ok(!r2.out.includes(GEHEIM));
+  } finally { if (alt === undefined) delete process.env.GOOGLE_CONFIG_DIR; else process.env.GOOGLE_CONFIG_DIR = alt; }
+});

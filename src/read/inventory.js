@@ -94,10 +94,13 @@ export function opFehler(e) {
 
 /** OAuth-Token-Datei ohne eigene client_id/client_secret: google-auth liest dann oauth-client.json; das vorher sicher
  *  prüfen (keine FIFO, kein Symlink, Größe), sonst hinge ein readFileSync dort den ganzen Lauf auf. */
+// google-auth nimmt die Felder der Token-Datei nur, wenn sie nicht leer sind (`||`), sonst oauth-client.json; flach oder
+// unter installed/web.
 function clientDateiOk(j, ordner) {
-  if (typeof j?.client_id === 'string' && typeof j?.client_secret === 'string') return true;
-  const oc = leseJson(join(ordner, 'oauth-client.json'));
-  return googleTyp(oc.j).typ === 'oauth-client';
+  if (j?.client_id && j?.client_secret) return true;
+  const { j: oc } = leseJson(join(ordner, 'oauth-client.json'));
+  const w = oc && typeof oc === 'object' ? (oc.installed || oc.web || oc) : null;
+  return Boolean(w?.client_id && w?.client_secret);
 }
 
 /** Typ einer Google-Credential-Datei aus ihrem Aufbau; nur Typ und (bei Dienstkonten) die Adresse. */
@@ -107,7 +110,8 @@ export function googleTyp(j) {
     const email = typeof j.client_email === 'string' && /^[a-z0-9._-]+@[a-z0-9.-]+$/i.test(j.client_email) ? j.client_email : null;
     return { typ: 'dienstkonto', email };
   }
-  if (j.installed || j.web) return { typ: 'oauth-client' };
+  const w = j.installed || j.web || j;
+  if (j.installed || j.web || (typeof w.client_id === 'string' && typeof w.client_secret === 'string' && !('refresh_token' in j))) return { typ: 'oauth-client' };
   if (typeof j.refresh_token === 'string') return { typ: 'oauth-token' };
   return { typ: 'unbekannt' };
 }

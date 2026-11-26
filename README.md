@@ -89,7 +89,8 @@ const at = await getDelegatedToken({ key, sub: 'postfach@example.org', scopes: [
 - `getDelegatedToken({ key, sub, scopes, … })` und `getServiceAccountToken({ key, scopes, … })`: `key` statt `datei`,
   genau eins von beiden (beides → Abbruch vor jedem Abruf). `datei` bleibt wie bisher.
 - `getAccessToken()` (Sheets, Drive): `GOOGLE_SERVICE_ACCOUNT_KEY` (JSON-Text) statt `GOOGLE_SERVICE_ACCOUNT_FILE`,
-  auch für Kindprozesse, die die Umgebung erben; beide zugleich → Abbruch. `GOOGLE_SERVICE_ACCOUNT_SCOPES` gilt
+  auch für Kindprozesse, die die Umgebung erben; beide zugleich → Abbruch. Eine gesetzte, aber leere
+  `GOOGLE_SERVICE_ACCOUNT_KEY` bricht ab (nie still zurück auf den Inhaber-Token). `GOOGLE_SERVICE_ACCOUNT_SCOPES` gilt
   für beide. Ohne beide Variablen wie bisher der Inhaber-Token.
 - Caches hängen am Fingerabdruck (SHA-256 über `client_email` und `private_key`), nicht am Wert: ein anderer
   Schlüssel bekommt nie das Token des vorigen, auch bei gleichem Kontonamen.

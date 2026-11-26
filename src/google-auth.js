@@ -168,7 +168,11 @@ export function parseServiceAccountKey(wert, { clientId = null, was = 'Dienstkon
 /** Fingerabdruck eines Schlüssels für Cache-Schlüssel: nie der Schlüssel selbst als Map-Schlüssel. */
 const fingerabdruck = (sa) => createHash('sha256').update(`${sa.client_email}\n${sa.private_key}`).digest('hex');
 
-/** Genau eine Quelle (datei oder key) → { sa, id }; id ist der Cache-Teil (Pfad bzw. Fingerabdruck). */
+/** Genau eine Quelle (datei oder key) → { sa, id }; id ist der Cache-Teil (Pfad bzw. Fingerabdruck).
+ *  BEWUSST NICHT UMGESETZT (Codex S40 A2): Dateiquellen bleiben am Pfad gecacht wie vor v1.8.0. Wird die Datei im
+ *  laufenden Prozess gegen einen anderen Schlüssel getauscht, gilt das alte Token bis zum Ablauf (≤ 1 h) weiter. Das
+ *  ist alter Bestand; den Fingerabdruck auch für Dateien hieße, die Datei vor jedem Cache-Treffer zu lesen
+ *  (Verhaltensänderung des Pfad-Wegs, den S40 unverändert lassen soll). */
 function schluesselQuelle({ datei, key }, wer) {
   if (datei && key != null) throw new Error(`${wer}: entweder datei oder key, nicht beides`);
   if (key != null) {
@@ -212,9 +216,12 @@ export async function getAccessToken() {
   // gelten, der das Dienstkonto verlangt.
   const saDatei = process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
   const saWert = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  // Gesetzt heißt gesetzt, auch leer (Codex S40 A1): ein gescheiterter Abruf, der '' hinterlässt, darf nie still zum
+  // Inhaber-Token führen. _FILE behält seine bisherige Bedeutung (leer = ungesetzt).
+  const mitWert = saWert !== undefined;
   // Genau eine Quelle: welcher Schlüssel gewinnt, wäre sonst Zufall der Reihenfolge.
-  if (saDatei && saWert) throw new Error('GOOGLE_SERVICE_ACCOUNT_FILE und GOOGLE_SERVICE_ACCOUNT_KEY zugleich gesetzt: nur eine Quelle für das Dienstkonto');
-  const sa = saWert ? schluesselQuelle({ key: parseServiceAccountKey(saWert, { was: 'GOOGLE_SERVICE_ACCOUNT_KEY' }) }, 'getAccessToken')
+  if (saDatei && mitWert) throw new Error('GOOGLE_SERVICE_ACCOUNT_FILE und GOOGLE_SERVICE_ACCOUNT_KEY zugleich gesetzt: nur eine Quelle für das Dienstkonto');
+  const sa = mitWert ? schluesselQuelle({ key: parseServiceAccountKey(saWert, { was: 'GOOGLE_SERVICE_ACCOUNT_KEY' }) }, 'getAccessToken')
     : saDatei ? schluesselQuelle({ datei: saDatei }, 'getAccessToken') : null;
   // Scopes gehören zur Zugangsart: ein Sheets-only-Token darf nie für einen Drive-Aufruf gelten und umgekehrt.
   const saScope = sa ? serviceAccountScopes() : null;
@@ -259,7 +266,8 @@ const delegiert = new Map();   // `${quelle}|${sub}|${scopes}` → { accessToken
  *  @param {{ datei?: string, key?: object|string|Buffer, sub: string, scopes: string[], allowedScopes?: string[]|null, fetchImpl?: typeof fetch }} p */
 export async function getDelegatedToken({ datei, key, sub, scopes, allowedScopes = null, fetchImpl = fetch }) {
   const q = schluesselQuelle({ datei, key }, 'getDelegatedToken');
-  if (!q || !sub || !scopes?.length) throw new Error('getDelegatedToken: datei (oder key), sub und scopes sind Pflicht');
+  // Ohne key wörtlich die bisherige Meldung (Codex S40 A3).
+  if (!q || !sub || !scopes?.length) throw new Error(`getDelegatedToken: ${key != null ? 'key' : 'datei'}, sub und scopes sind Pflicht`);
   const schluessel = `${q.id}|${sub}|${scopes.join(' ')}`;
   const c = delegiert.get(schluessel);
   if (c && c.expiresAt > Date.now() + 60_000) {
@@ -282,7 +290,7 @@ const eigeneScopes = new Map();   // `${quelle}|${scopes}` → { accessToken, ex
  *  @param {{ datei?: string, key?: object|string|Buffer, scopes: string[], fetchImpl?: typeof fetch }} p */
 export async function getServiceAccountToken({ datei, key, scopes, fetchImpl = fetch }) {
   const q = schluesselQuelle({ datei, key }, 'getServiceAccountToken');
-  if (!q || !scopes?.length) throw new Error('getServiceAccountToken: datei (oder key) und scopes sind Pflicht');
+  if (!q || !scopes?.length) throw new Error(`getServiceAccountToken: ${key != null ? 'key' : 'datei'} und scopes sind Pflicht`);
   const scope = serviceAccountScopes(scopes.join(' '));
   const schluessel = `${q.id}|${scope}`;
   const c = eigeneScopes.get(schluessel);

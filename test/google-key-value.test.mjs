@@ -207,3 +207,29 @@ test('getAccessToken: Wechsel von _FILE auf _KEY nutzt nicht das Token der Datei
     assert.ok(signiertMit(aufrufe[1].assertion, b.publicKey));
   });
 });
+
+test('getAccessToken: leeres GOOGLE_SERVICE_ACCOUNT_KEY → Abbruch, kein stiller Rückfall auf den Inhaber (Codex S40 A1)', async (t) => {
+  await mitUmgebung({ GOOGLE_SERVICE_ACCOUNT_KEY: '' }, async ({ aufrufe }) => {
+    // Ein Inhaber-Token läge bereit: der Rückfall darauf wäre der Fehler.
+    writeFileSync(path.join(process.env.GOOGLE_CONFIG_DIR, 'token.json'), JSON.stringify({ client_id: 'c', client_secret: 's', refresh_token: 'r-erfunden' }));
+    const { getAccessToken } = await laden('env-leer');
+    await assert.rejects(getAccessToken(), /GOOGLE_SERVICE_ACCOUNT_KEY ist leer/);
+    assert.equal(aufrufe.length, 0);
+  });
+  const datei = path.join(tmpDir('sa-wert-', t), 'sa.json');
+  writeFileSync(datei, JSON.stringify(keyA));
+  await mitUmgebung({ GOOGLE_SERVICE_ACCOUNT_FILE: datei, GOOGLE_SERVICE_ACCOUNT_KEY: '' }, async ({ aufrufe }) => {
+    const { getAccessToken } = await laden('env-leer-datei');
+    await assert.rejects(getAccessToken(), /zugleich gesetzt/);
+    assert.equal(aufrufe.length, 0);
+  });
+});
+
+test('Pflichtmeldungen ohne key wörtlich wie bisher (Codex S40 A3)', async () => {
+  const { getDelegatedToken, getServiceAccountToken } = await laden('pflicht');
+  await assert.rejects(getDelegatedToken({ datei: '/x/sa.json', scopes: ['s'] }), { message: 'getDelegatedToken: datei, sub und scopes sind Pflicht' });
+  await assert.rejects(getDelegatedToken({ sub: 'a@example.org', scopes: ['s'] }), { message: 'getDelegatedToken: datei, sub und scopes sind Pflicht' });
+  await assert.rejects(getServiceAccountToken({ datei: '/x/sa.json', scopes: [] }), { message: 'getServiceAccountToken: datei und scopes sind Pflicht' });
+  await assert.rejects(getDelegatedToken({ key: keyA, scopes: ['s'] }), { message: 'getDelegatedToken: key, sub und scopes sind Pflicht' });
+  await assert.rejects(getServiceAccountToken({ key: keyA, scopes: [] }), { message: 'getServiceAccountToken: key und scopes sind Pflicht' });
+});

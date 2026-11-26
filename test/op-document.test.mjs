@@ -31,6 +31,13 @@ test('opDocumentGet: argv document get <eintrag> --vault <tresor>, Umgebung gena
   assert.ok(!args.some((x) => x.includes(TOKEN)));
 });
 
+test('opDocumentGet: Bytes unverändert, auch Nicht-UTF-8 und Zeilenenden (Codex S40 B1)', async () => {
+  const roh = Buffer.from([0x7b, 0x00, 0x80, 0xff, 0x0d, 0x0a, 0x7d, 0x0a]);
+  const exec = (cmd, args, opts, cb) => queueMicrotask(() => cb(null, Buffer.from(roh), Buffer.alloc(0)));
+  const wert = await opDocumentGet({ vault: 'team-office', item: 'sa-jobs', token: TOKEN, exec });
+  assert.ok(wert.equals(roh));
+});
+
 test('opDocumentGet: ungültige Namen und Token → Abbruch vor op, ohne Wert in der Meldung', async () => {
   const f = fake(() => ({ stdout: INHALT }));
   const falsch = [

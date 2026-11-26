@@ -23,7 +23,7 @@
 // Meldung zitiert den Inhalt.
 
 import { readFileSync } from 'node:fs';
-import { createSign, createHash } from 'node:crypto';
+import { createSign, createHash, createPrivateKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -159,6 +159,9 @@ export function parseServiceAccountKey(wert, { clientId = null, was = 'Dienstkon
   if (j.type !== 'service_account') throw new Error(`${was}: kein Dienstkonto-Schlüssel (type ist nicht service_account)`);
   if (typeof j.client_email !== 'string' || !j.client_email) throw new Error(`${was} ohne client_email`);
   if (typeof j.private_key !== 'string' || !j.private_key) throw new Error(`${was} ohne private_key`);
+  // Früh und mit fester Meldung statt erst beim Signieren mit der OpenSSL-Meldung (reviewer S40 #4), z. B. doppelt
+  // maskierte Zeilenumbrüche nach einem Env-Transport. Ohne cause: die Ursache bleibt drinnen.
+  try { createPrivateKey(j.private_key); } catch { throw new Error(`${was}: private_key nicht als Schlüssel lesbar (Inhalt nicht ausgegeben)`); }
   if (clientId != null && String(j.client_id) !== String(clientId)) {
     throw new Error(`${was} gehört zu einem anderen Dienstkonto (client_id passt nicht zu ${clientId})`);
   }
@@ -166,7 +169,7 @@ export function parseServiceAccountKey(wert, { clientId = null, was = 'Dienstkon
 }
 
 /** Fingerabdruck eines Schlüssels für Cache-Schlüssel: nie der Schlüssel selbst als Map-Schlüssel. */
-const fingerabdruck = (sa) => createHash('sha256').update(`${sa.client_email}\n${sa.private_key}`).digest('hex');
+const fingerabdruck = (sa) => createHash('sha256').update(JSON.stringify([sa.client_email, sa.private_key])).digest('hex');
 
 /** Genau eine Quelle (datei oder key) → { sa, id }; id ist der Cache-Teil (Pfad bzw. Fingerabdruck).
  *  BEWUSST NICHT UMGESETZT (Codex S40 A2): Dateiquellen bleiben am Pfad gecacht wie vor v1.8.0. Wird die Datei im
@@ -211,18 +214,29 @@ async function serviceAccountToken(quelle, opts, fetchImpl = fetch) {
 
 let cached = null; // { accessToken, expiresAt, quelle }
 
+/**
+ * Welche Dienstkonto-Quelle getAccessToken() nimmt: 'key' (GOOGLE_SERVICE_ACCOUNT_KEY gesetzt, auch leer: dann bricht
+ * getAccessToken ab), 'file' (GOOGLE_SERVICE_ACCOUNT_FILE nicht leer) oder null (Inhaber-Token). Beide → wirft. Für
+ * Aufrufer, die die Zugangsart vorab prüfen oder melden (reviewer S40 #3), damit niemand die Regel nachbaut. Liest
+ * nur, ob die Variablen gesetzt sind, nie den Inhalt.
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {'key'|'file'|null}
+ */
+export function serviceAccountSource(env = process.env) {
+  const mitWert = env.GOOGLE_SERVICE_ACCOUNT_KEY !== undefined;
+  // Genau eine Quelle: welcher Schlüssel gewinnt, wäre sonst Zufall der Reihenfolge.
+  if (env.GOOGLE_SERVICE_ACCOUNT_FILE && mitWert) throw new Error('GOOGLE_SERVICE_ACCOUNT_FILE und GOOGLE_SERVICE_ACCOUNT_KEY zugleich gesetzt: nur eine Quelle für das Dienstkonto');
+  return mitWert ? 'key' : env.GOOGLE_SERVICE_ACCOUNT_FILE ? 'file' : null;
+}
+
 export async function getAccessToken() {
   // Zugangsart VOR dem Cache bestimmen: ein gecachtes Inhaber-Token darf nie für einen Aufruf
   // gelten, der das Dienstkonto verlangt.
-  const saDatei = process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
-  const saWert = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   // Gesetzt heißt gesetzt, auch leer (Codex S40 A1): ein gescheiterter Abruf, der '' hinterlässt, darf nie still zum
   // Inhaber-Token führen. _FILE behält seine bisherige Bedeutung (leer = ungesetzt).
-  const mitWert = saWert !== undefined;
-  // Genau eine Quelle: welcher Schlüssel gewinnt, wäre sonst Zufall der Reihenfolge.
-  if (saDatei && mitWert) throw new Error('GOOGLE_SERVICE_ACCOUNT_FILE und GOOGLE_SERVICE_ACCOUNT_KEY zugleich gesetzt: nur eine Quelle für das Dienstkonto');
-  const sa = mitWert ? schluesselQuelle({ key: parseServiceAccountKey(saWert, { was: 'GOOGLE_SERVICE_ACCOUNT_KEY' }) }, 'getAccessToken')
-    : saDatei ? schluesselQuelle({ datei: saDatei }, 'getAccessToken') : null;
+  const art = serviceAccountSource();
+  const sa = art === 'key' ? schluesselQuelle({ key: parseServiceAccountKey(process.env.GOOGLE_SERVICE_ACCOUNT_KEY, { was: 'GOOGLE_SERVICE_ACCOUNT_KEY' }) }, 'getAccessToken')
+    : art === 'file' ? schluesselQuelle({ datei: process.env.GOOGLE_SERVICE_ACCOUNT_FILE }, 'getAccessToken') : null;
   // Scopes gehören zur Zugangsart: ein Sheets-only-Token darf nie für einen Drive-Aufruf gelten und umgekehrt.
   const saScope = sa ? serviceAccountScopes() : null;
   const quelle = sa ? `sa:${sa.id}|${saScope}` : 'oauth';

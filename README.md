@@ -84,13 +84,21 @@ const at = await getDelegatedToken({ key, sub: 'postfach@example.org', scopes: [
 ```
 
 - `parseServiceAccountKey(wert, { clientId? })`: Objekt, JSON-Text oder Buffer → flache Kopie. Prüft nur die Form
-  (`type` = `service_account`, `client_email`, `private_key`) und mit `clientId` das richtige Konto. Meldungen
+  (`type` = `service_account`, `client_email`, `private_key` als lesbarer Schlüssel) und mit `clientId` das richtige
+  Konto (Aufrufer sollten sie immer mitgeben: op findet Einträge auch über den Titel). Meldungen
   nennen nie den Inhalt (auch nicht die Meldung von `JSON.parse`). Den Buffer nullt der Aufrufer.
 - `getDelegatedToken({ key, sub, scopes, … })` und `getServiceAccountToken({ key, scopes, … })`: `key` statt `datei`,
   genau eins von beiden (beides → Abbruch vor jedem Abruf). `datei` bleibt wie bisher.
 - `getAccessToken()` (Sheets, Drive): `GOOGLE_SERVICE_ACCOUNT_KEY` (JSON-Text) statt `GOOGLE_SERVICE_ACCOUNT_FILE`,
   auch für Kindprozesse, die die Umgebung erben; beide zugleich → Abbruch. Eine gesetzte, aber leere
-  `GOOGLE_SERVICE_ACCOUNT_KEY` bricht ab (nie still zurück auf den Inhaber-Token). `GOOGLE_SERVICE_ACCOUNT_SCOPES` gilt
+  `GOOGLE_SERVICE_ACCOUNT_KEY` bricht ab (nie still zurück auf den Inhaber-Token).
+  `serviceAccountSource()` sagt ohne Inhalt, welche Quelle gilt (`'key'`, `'file'` oder `null` = Inhaber; beide →
+  wirft), für Aufrufer, die die Zugangsart vorab prüfen oder melden.
+- **Mischbetrieb:** `GOOGLE_SERVICE_ACCOUNT_KEY` nur setzen, wenn **jeder** erbende Prozess access-client ab v1.8.0
+  lädt. Ältere Versionen kennen die Variable nicht und nehmen still den Inhaber-Token, wenn `token.json` oder
+  `GOOGLE_OAUTH_*` vorhanden ist; beide Variablen übergangsweise zu setzen geht nicht (v1.8.0 bricht dann ab).
+- **Entziehen:** `process.env.GOOGLE_SERVICE_ACCOUNT_KEY = ''` (bricht ab), nicht `delete` (danach gälte wieder der
+  Inhaber-Token). `GOOGLE_SERVICE_ACCOUNT_SCOPES` gilt
   für beide. Ohne beide Variablen wie bisher der Inhaber-Token.
 - Caches hängen am Fingerabdruck (SHA-256 über `client_email` und `private_key`), nicht am Wert: ein anderer
   Schlüssel bekommt nie das Token des vorigen, auch bei gleichem Kontonamen.

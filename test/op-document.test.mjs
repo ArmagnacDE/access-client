@@ -53,6 +53,8 @@ test('opDocumentGet: ungültige Namen und Token → Abbruch vor op, ohne Wert in
   assert.equal(f.aufrufe.length, 0);
 });
 
+// Annahme (reviewer S40 #6): op document get meldet „isn't an item“ / „isn't a vault“ wie op item get (gemeinsamer
+// Eintrags-Lookup der CLI); am echten op nicht belegt. Weicht der Wortlaut ab, wird es OpReadError (Stopp, nicht Fehlt).
 test('opDocumentGet: Eintrag fehlt → OpItemMissingError; stdout nie in der Meldung; leer → Fehler', async () => {
   const fehlt = fake(() => ({ err: fehler(), stdout: INHALT, stderr: '[ERROR] 2026/11/26 10:00:00 "sa-jobs" isn\'t an item in the "team-office" vault. Specify the item with its UUID, name, or domain.\n' }));
   const e = await opDocumentGet({ vault: 'team-office', item: 'sa-jobs', token: TOKEN, exec: fehlt.exec }).catch((x) => x);

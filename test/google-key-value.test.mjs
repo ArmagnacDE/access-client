@@ -233,3 +233,26 @@ test('Pflichtmeldungen ohne key wörtlich wie bisher (Codex S40 A3)', async () =
   await assert.rejects(getDelegatedToken({ key: keyA, scopes: ['s'] }), { message: 'getDelegatedToken: key, sub und scopes sind Pflicht' });
   await assert.rejects(getServiceAccountToken({ key: keyA, scopes: [] }), { message: 'getServiceAccountToken: key und scopes sind Pflicht' });
 });
+
+test('parseServiceAccountKey: private_key, der kein Schlüssel ist → feste Meldung ohne Inhalt (reviewer S40 #4)', async () => {
+  const { parseServiceAccountKey } = await laden('pem-kaputt');
+  const verstuemmelt = keyA.private_key.replace(/\n/g, '\\n');   // doppelt maskiert, wie nach einem Env-Transport
+  assert.throws(() => parseServiceAccountKey({ ...keyA, private_key: verstuemmelt }), (e) => /private_key nicht als Schlüssel lesbar/.test(e.message) && ohneSchluessel(e.message) && e.cause === undefined);
+});
+
+test('Wert-Weg: fester Token-Endpunkt, token_uri aus dem Schlüssel zählt nie (reviewer S40 #5)', async () => {
+  const { getDelegatedToken } = await laden('tokenuri');
+  const { fetchImpl, aufrufe } = tokenFetch();
+  await getDelegatedToken({ key: { ...keyA, token_uri: 'https://fremd.example/token' }, sub: 'a@example.org', scopes: ['s1'], fetchImpl });
+  assert.equal(aufrufe[0].url, 'https://oauth2.googleapis.com/token');
+});
+
+test('serviceAccountSource: key | file | null nach derselben Regel wie getAccessToken (reviewer S40 #3)', async () => {
+  const { serviceAccountSource } = await laden('quelle');
+  assert.equal(serviceAccountSource({}), null);
+  assert.equal(serviceAccountSource({ GOOGLE_SERVICE_ACCOUNT_FILE: '' }), null);
+  assert.equal(serviceAccountSource({ GOOGLE_SERVICE_ACCOUNT_FILE: '/x/sa.json' }), 'file');
+  assert.equal(serviceAccountSource({ GOOGLE_SERVICE_ACCOUNT_KEY: '{}' }), 'key');
+  assert.equal(serviceAccountSource({ GOOGLE_SERVICE_ACCOUNT_KEY: '' }), 'key', 'gesetzt, auch leer: getAccessToken bricht dann ab, nie OAuth');
+  assert.throws(() => serviceAccountSource({ GOOGLE_SERVICE_ACCOUNT_FILE: '/x', GOOGLE_SERVICE_ACCOUNT_KEY: '' }), /zugleich gesetzt/);
+});

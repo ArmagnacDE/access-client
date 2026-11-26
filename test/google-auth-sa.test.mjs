@@ -6,6 +6,10 @@ import path from 'node:path';
 import { serviceAccountAssertion, serviceAccountScopes, SA_SCOPES } from '../src/google-auth.js';
 import { tmpDir } from './helpers/tmpdir.mjs';
 
+// Ein in der Shell gesetztes GOOGLE_SERVICE_ACCOUNT_KEY (ab v1.8.0) würde die Datei-Tests verfälschen; node --test startet
+// je Datei einen eigenen Prozess, das Löschen gilt nur hier (reviewer S40 #8).
+delete process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const sa = {
   client_email: 'jobs@test.iam.gserviceaccount.com',

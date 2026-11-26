@@ -15,9 +15,15 @@
 // Domänenweit delegiertes Dienstkonto: eigenes Konto mit eigener Schlüsseldatei, handelt für genau ein Postfach.
 // getDelegatedToken() nimmt Datei, Postfach und Scopes ausdrücklich entgegen und teilt sich weder
 // Cache noch Umgebungsvariable mit getAccessToken() — kein Job bekommt es aus Versehen.
+//
+// Schlüssel als Wert (ab v1.8.0, S40 „Google-Schlüssel ohne Datei“): Statt eines Pfads nehmen getDelegatedToken und
+// getServiceAccountToken `key` (Objekt, JSON-Text oder Buffer, z. B. aus op-read opDocumentGet), getAccessToken liest
+// GOOGLE_SERVICE_ACCOUNT_KEY (JSON-Text) statt GOOGLE_SERVICE_ACCOUNT_FILE. Genau eine Quelle: beides zugleich bricht
+// ab. Caches hängen am Fingerabdruck (SHA-256 über Konto und privaten Schlüssel), nie am Schlüssel selbst; keine
+// Meldung zitiert den Inhalt.
 
 import { readFileSync } from 'node:fs';
-import { createSign } from 'node:crypto';
+import { createSign, createHash, createPrivateKey } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -128,12 +134,68 @@ export function serviceAccountAssertion(sa, nowSek = Math.floor(Date.now() / 100
   return `${kopf}.${inhalt}.${signatur}`;
 }
 
-async function serviceAccountToken(datei, opts, fetchImpl = fetch) {
-  let sa;
+/**
+ * Dienstkonto-Schlüssel aus einem Wert: Objekt, JSON-Text oder Buffer (der Buffer wird nicht verändert; nullen tut der
+ * Aufrufer). Liefert eine eigene, flache Kopie. Prüft nur die Form (type service_account, client_email, private_key)
+ * und optional die Client-ID; Meldungen nennen nie den Inhalt.
+ * @param {object|string|Buffer} wert
+ * @param {{ clientId?: string, was?: string }} [o]  was: Bezeichnung in Meldungen
+ * @returns {{ type: string, client_email: string, private_key: string, client_id?: string }}
+ */
+export function parseServiceAccountKey(wert, { clientId = null, was = 'Dienstkonto-Schlüssel' } = {}) {
+  if (wert == null) throw new Error(`${was} fehlt`);
+  let j;
+  if (Buffer.isBuffer(wert) || typeof wert === 'string') {
+    const text = Buffer.isBuffer(wert) ? wert.toString('utf8') : wert;
+    if (!text.trim()) throw new Error(`${was} ist leer`);
+    // Nie die Meldung von JSON.parse übernehmen: sie zitiert Teile des Textes.
+    try { j = JSON.parse(text); } catch { throw new Error(`${was}: kein gültiges JSON (Inhalt nicht ausgegeben)`); }
+  } else if (typeof wert === 'object') {
+    j = wert;
+  } else {
+    throw new Error(`${was}: erwartet Objekt, JSON-Text oder Buffer`);
+  }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error(`${was}: kein Objekt`);
+  if (j.type !== 'service_account') throw new Error(`${was}: kein Dienstkonto-Schlüssel (type ist nicht service_account)`);
+  if (typeof j.client_email !== 'string' || !j.client_email) throw new Error(`${was} ohne client_email`);
+  if (typeof j.private_key !== 'string' || !j.private_key) throw new Error(`${was} ohne private_key`);
+  // Früh und mit fester Meldung statt erst beim Signieren mit der OpenSSL-Meldung (reviewer S40 #4), z. B. doppelt
+  // maskierte Zeilenumbrüche nach einem Env-Transport. Ohne cause: die Ursache bleibt drinnen.
+  try { createPrivateKey(j.private_key); } catch { throw new Error(`${was}: private_key nicht als Schlüssel lesbar (Inhalt nicht ausgegeben)`); }
+  if (clientId != null && String(j.client_id) !== String(clientId)) {
+    throw new Error(`${was} gehört zu einem anderen Dienstkonto (client_id passt nicht zu ${clientId})`);
+  }
+  return { ...j };
+}
+
+/** Fingerabdruck eines Schlüssels für Cache-Schlüssel: nie der Schlüssel selbst als Map-Schlüssel. */
+const fingerabdruck = (sa) => createHash('sha256').update(JSON.stringify([sa.client_email, sa.private_key])).digest('hex');
+
+/** Genau eine Quelle (datei oder key) → { sa, id }; id ist der Cache-Teil (Pfad bzw. Fingerabdruck).
+ *  BEWUSST NICHT UMGESETZT (Codex S40 A2): Dateiquellen bleiben am Pfad gecacht wie vor v1.8.0. Wird die Datei im
+ *  laufenden Prozess gegen einen anderen Schlüssel getauscht, gilt das alte Token bis zum Ablauf (≤ 1 h) weiter. Das
+ *  ist alter Bestand; den Fingerabdruck auch für Dateien hieße, die Datei vor jedem Cache-Treffer zu lesen
+ *  (Verhaltensänderung des Pfad-Wegs, den S40 unverändert lassen soll). */
+function schluesselQuelle({ datei, key }, wer) {
+  if (datei && key != null) throw new Error(`${wer}: entweder datei oder key, nicht beides`);
+  if (key != null) {
+    const sa = parseServiceAccountKey(key);
+    return { sa, id: `key:${fingerabdruck(sa)}` };
+  }
+  if (!datei) return null;
+  return { datei, id: `datei:${datei}` };
+}
+
+function ausDateiLesen(datei) {
   // Nie den Dateiinhalt in eine Fehlermeldung — er ist der private Schlüssel.
-  try { sa = JSON.parse(readFileSync(datei, 'utf8')); } catch (e) {
+  try { return JSON.parse(readFileSync(datei, 'utf8')); } catch (e) {
     throw new Error(`Dienstkonto-Datei ${datei} nicht lesbar (${e.code ?? 'kein gültiges JSON'})`);
   }
+}
+
+/** Token per JWT-Bearer. quelle: { datei } (Datei lesen) oder { sa } (Schlüssel schon als Objekt). */
+async function serviceAccountToken(quelle, opts, fetchImpl = fetch) {
+  const sa = quelle.sa ?? ausDateiLesen(quelle.datei);
   const body = new URLSearchParams({
     grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
     assertion: serviceAccountAssertion(sa, undefined, opts),
@@ -152,18 +214,37 @@ async function serviceAccountToken(datei, opts, fetchImpl = fetch) {
 
 let cached = null; // { accessToken, expiresAt, quelle }
 
+/**
+ * Welche Dienstkonto-Quelle getAccessToken() nimmt: 'key' (GOOGLE_SERVICE_ACCOUNT_KEY gesetzt, auch leer: dann bricht
+ * getAccessToken ab), 'file' (GOOGLE_SERVICE_ACCOUNT_FILE nicht leer) oder null (Inhaber-Token). Beide → wirft. Für
+ * Aufrufer, die die Zugangsart vorab prüfen oder melden (reviewer S40 #3), damit niemand die Regel nachbaut. Liest
+ * nur, ob die Variablen gesetzt sind, nie den Inhalt.
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {'key'|'file'|null}
+ */
+export function serviceAccountSource(env = process.env) {
+  const mitWert = env.GOOGLE_SERVICE_ACCOUNT_KEY !== undefined;
+  // Genau eine Quelle: welcher Schlüssel gewinnt, wäre sonst Zufall der Reihenfolge.
+  if (env.GOOGLE_SERVICE_ACCOUNT_FILE && mitWert) throw new Error('GOOGLE_SERVICE_ACCOUNT_FILE und GOOGLE_SERVICE_ACCOUNT_KEY zugleich gesetzt: nur eine Quelle für das Dienstkonto');
+  return mitWert ? 'key' : env.GOOGLE_SERVICE_ACCOUNT_FILE ? 'file' : null;
+}
+
 export async function getAccessToken() {
   // Zugangsart VOR dem Cache bestimmen: ein gecachtes Inhaber-Token darf nie für einen Aufruf
   // gelten, der das Dienstkonto verlangt.
-  const saDatei = process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
+  // Gesetzt heißt gesetzt, auch leer (Codex S40 A1): ein gescheiterter Abruf, der '' hinterlässt, darf nie still zum
+  // Inhaber-Token führen. _FILE behält seine bisherige Bedeutung (leer = ungesetzt).
+  const art = serviceAccountSource();
+  const sa = art === 'key' ? schluesselQuelle({ key: parseServiceAccountKey(process.env.GOOGLE_SERVICE_ACCOUNT_KEY, { was: 'GOOGLE_SERVICE_ACCOUNT_KEY' }) }, 'getAccessToken')
+    : art === 'file' ? schluesselQuelle({ datei: process.env.GOOGLE_SERVICE_ACCOUNT_FILE }, 'getAccessToken') : null;
   // Scopes gehören zur Zugangsart: ein Sheets-only-Token darf nie für einen Drive-Aufruf gelten und umgekehrt.
-  const saScope = saDatei ? serviceAccountScopes() : null;
-  const quelle = saDatei ? `sa:${saDatei}|${saScope}` : 'oauth';
+  const saScope = sa ? serviceAccountScopes() : null;
+  const quelle = sa ? `sa:${sa.id}|${saScope}` : 'oauth';
   if (cached && cached.quelle === quelle && cached.expiresAt > Date.now() + 60_000) {
     return cached.accessToken;
   }
-  if (saDatei) {
-    const json = await serviceAccountToken(saDatei, { scope: saScope });
+  if (sa) {
+    const json = await serviceAccountToken(sa, { scope: saScope });
     cached = { accessToken: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000, quelle };
     return cached.accessToken;
   }
@@ -190,40 +271,45 @@ export async function getAccessToken() {
   return cached.accessToken;
 }
 
-const delegiert = new Map();   // `${datei}|${sub}|${scopes}` → { accessToken, expiresAt }
+const delegiert = new Map();   // `${quelle}|${sub}|${scopes}` → { accessToken, expiresAt }
 
 /** Token eines domänenweit delegierten Dienstkontos für genau ein Postfach.
+ *  Schlüssel: `datei` (Pfad) oder `key` (Objekt, JSON-Text oder Buffer; ab v1.8.0), genau eins von beiden.
  *  allowedScopes (optional): Liste der Scopes, die das Token höchstens haben darf; gemessen wird, was Google meldet
  *  (Token-Antwort, sonst tokeninfo). Ohne Angabe keine Prüfung (wie bisher).
- *  @param {{ datei: string, sub: string, scopes: string[], allowedScopes?: string[]|null, fetchImpl?: typeof fetch }} p */
-export async function getDelegatedToken({ datei, sub, scopes, allowedScopes = null, fetchImpl = fetch }) {
-  if (!datei || !sub || !scopes?.length) throw new Error('getDelegatedToken: datei, sub und scopes sind Pflicht');
-  const schluessel = `${datei}|${sub}|${scopes.join(' ')}`;
+ *  @param {{ datei?: string, key?: object|string|Buffer, sub: string, scopes: string[], allowedScopes?: string[]|null, fetchImpl?: typeof fetch }} p */
+export async function getDelegatedToken({ datei, key, sub, scopes, allowedScopes = null, fetchImpl = fetch }) {
+  const q = schluesselQuelle({ datei, key }, 'getDelegatedToken');
+  // Ohne key wörtlich die bisherige Meldung (Codex S40 A3).
+  if (!q || !sub || !scopes?.length) throw new Error(`getDelegatedToken: ${key != null ? 'key' : 'datei'}, sub und scopes sind Pflicht`);
+  const schluessel = `${q.id}|${sub}|${scopes.join(' ')}`;
   const c = delegiert.get(schluessel);
   if (c && c.expiresAt > Date.now() + 60_000) {
     if (allowedScopes) assertScopesWithin(c.scope ?? (c.scope = await grantedScopesOf({ access_token: c.accessToken }, fetchImpl)), allowedScopes, `Dienstkonto ${sub}`);
     return c.accessToken;
   }
-  const json = await serviceAccountToken(datei, { scope: scopes.join(' '), sub }, fetchImpl);
+  const json = await serviceAccountToken(q, { scope: scopes.join(' '), sub }, fetchImpl);
   const scope = allowedScopes ? await grantedScopesOf(json, fetchImpl) : (typeof json.scope === 'string' ? json.scope : null);
   if (allowedScopes) assertScopesWithin(scope, allowedScopes, `Dienstkonto ${sub}`);
   delegiert.set(schluessel, { accessToken: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000, scope });
   return json.access_token;
 }
 
-const eigeneScopes = new Map();   // `${datei}|${scopes}` → { accessToken, expiresAt }
+const eigeneScopes = new Map();   // `${quelle}|${scopes}` → { accessToken, expiresAt }
 
 /** Token eines Dienstkontos mit ausdrücklich genannten Scopes, ohne Delegierung (z. B. Scope content).
  *  Unabhängig von GOOGLE_SERVICE_ACCOUNT_SCOPES und vom Cache in getAccessToken(): ein Job bekommt so nur den Scope,
  *  den er selbst anfordert, und andere Jobs im selben Prozess bekommen ihn nicht.
- *  @param {{ datei: string, scopes: string[], fetchImpl?: typeof fetch }} p */
-export async function getServiceAccountToken({ datei, scopes, fetchImpl = fetch }) {
-  if (!datei || !scopes?.length) throw new Error('getServiceAccountToken: datei und scopes sind Pflicht');
+ *  Schlüssel: `datei` (Pfad) oder `key` (Objekt, JSON-Text oder Buffer; ab v1.8.0), genau eins von beiden.
+ *  @param {{ datei?: string, key?: object|string|Buffer, scopes: string[], fetchImpl?: typeof fetch }} p */
+export async function getServiceAccountToken({ datei, key, scopes, fetchImpl = fetch }) {
+  const q = schluesselQuelle({ datei, key }, 'getServiceAccountToken');
+  if (!q || !scopes?.length) throw new Error(`getServiceAccountToken: ${key != null ? 'key' : 'datei'} und scopes sind Pflicht`);
   const scope = serviceAccountScopes(scopes.join(' '));
-  const schluessel = `${datei}|${scope}`;
+  const schluessel = `${q.id}|${scope}`;
   const c = eigeneScopes.get(schluessel);
   if (c && c.expiresAt > Date.now() + 60_000) return c.accessToken;
-  const json = await serviceAccountToken(datei, { scope }, fetchImpl);
+  const json = await serviceAccountToken(q, { scope }, fetchImpl);
   eigeneScopes.set(schluessel, { accessToken: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000 });
   return json.access_token;
 }

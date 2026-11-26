@@ -13,7 +13,8 @@
 // - „Gibt es nicht“ (Tresor, Eintrag oder Feld, belegter Wortlaut von op) ist eine eigene Fehlerklasse
 //   (OpItemMissingError mit `was`), jeder andere Fehler (Token, Netz, Limit, Zeitüberschreitung) ist OpReadError.
 // - `op read` gibt Binärdateien verfälscht aus (ungültiges UTF-8 → U+FFFD). opRead ist für Text-Geheimnisse
-//   (Passwörter, API-Schlüssel); Dokumente gehören nicht hierher.
+//   (Passwörter, API-Schlüssel); Dokumente liest opDocumentGet (`op document get`, Bytes unverändert, ab v1.8.0,
+//   S40 „Google-Schlüssel ohne Datei“), ohne --out-file: der Inhalt landet nur im Speicher, nie in einer Datei.
 // - `op item get` nur in zwei engen Formen: Kopf eines Eintrags (ID, Titel, Feldnamen; nie Werte; der Puffer mit der
 //   ganzen Antwort wird genullt, Kopien in Strings bleiben bis zur Speicherbereinigung) und der aktuelle Einmal-Code
 //   (--otp, nur über die Eintrags-ID).
@@ -226,6 +227,24 @@ function pruefeEintrag(item, token) {
 }
 // 1Password-Eintrags-ID: 26 Zeichen a–z/0–9 (Spielraum 20–32).
 const ITEM_ID = /^[a-z0-9]{20,32}$/;
+
+/**
+ * Ein 1Password-Dokument lesen: `op document get <eintrag> --vault <tresor>`, ohne --out-file (nur stdout, nie eine
+ * Datei). Für Dateien wie Google-Dienstkonto-Schlüssel (JSON), die op read verfälschen könnte. Ein Dokument-Eintrag
+ * hat genau eine Datei (op kennt keine Auswahl); eine angehängte Datei an einem anderen Eintrag liest opRead mit
+ * op://<tresor>/<eintrag>/<dateiname>.
+ * @param {{ vault: string, item: string, token: string, exec?: typeof execFile, timeoutMs?: number,
+ *           maxBytes?: number, path?: string, home?: string }} o
+ * @returns {Promise<Buffer>}  Inhalt unverändert (nie leer); der Aufrufer überschreibt ihn nach Gebrauch (fill(0))
+ */
+export async function opDocumentGet({ vault, item, token, exec = execFile, timeoutMs = 30_000, maxBytes = 1024 * 1024, path, home } = {}) {
+  pruefeToken(token);
+  pruefeTresor(vault, token);
+  pruefeEintrag(item, token);
+  const wert = await opAusfuehren(['document', 'get', item, '--vault', vault], { token, exec, timeoutMs, maxBytes, path, home, was: 'Dokument lesen', namen: [vault, item] });
+  if (!wert.length) throw new OpReadError('1Password: Dokument lesen lieferte einen leeren Wert');
+  return wert;
+}
 
 /**
  * Kopf eines Eintrags: `op item get <eintrag> --vault <tresor> --format json`, davon nur ID, Titel und Feldnamen.

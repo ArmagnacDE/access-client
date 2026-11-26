@@ -11,13 +11,13 @@ Abweichungen stehen unter „Änderungen gegenüber der Herkunft“.
 
 | Unterpfad | Inhalt |
 |---|---|
-| `access-client/google-auth` | Access-Tokens: Inhaber-Token (`token.json`), Token-Datei je Postfach mit Scope-Prüfung, Dienstkonto, delegiertes Dienstkonto |
+| `access-client/google-auth` | Access-Tokens: Inhaber-Token (`token.json`), Token-Datei je Postfach mit Scope-Prüfung, Dienstkonto, delegiertes Dienstkonto; Dienstkonto-Schlüssel als Datei oder ab v1.8.0 als Wert |
 | `access-client/gmail` | Gmail mit Wächter: **nie senden**, Entwürfe nur über `drafts`, Lesen nur über feste GET-Pfade, Sicherheitsmails (konfiguriertes Label) gesperrt |
 | `access-client/drive` | Drive v3 (Lesen und Schreibwege) |
 | `access-client/sheets` | Sheets v4 (Lesen und Schreibwege) |
 | `access-client/op-vault` | 1Password-Tresore unter zwei Schreibweisen (mit und ohne Präfix) |
 | `access-client/op-token` | 1Password-Service-Account-Token aus einer Liste von Dateien (Rechte genau 600, kein stiller Rückfall) |
-| `access-client/op-read` | `op read`, `op vault get`, `op item get` (Kopf, Einmal-Code), ab v1.6.0 `op vault list` und `op whoami` (nur Namen) an einer geprüften Stelle (ab v1.1.0) |
+| `access-client/op-read` | `op read`, `op vault get`, `op item get` (Kopf, Einmal-Code), ab v1.6.0 `op vault list` und `op whoami` (nur Namen), ab v1.8.0 `op document get` an einer geprüften Stelle (ab v1.1.0) |
 | `access-client/read` | der Lese-Befehl `access-read` als Funktion `run(argv)` |
 | `access-client/security-mail` | Merkmale von Sicherheitsmails (Betreffe, Absender): eine Liste für Gmail-Filter und Wächter (ab v1.3.0) |
 | `access-client/gmail-setup` | Sperr-Label und Filter je Postfach anlegen, nur Fehlendes, nie löschen (ab v1.3.0) |
@@ -66,6 +66,37 @@ export * from 'access-client/gmail';
   legt genau einen Entwurf an, und nur, wenn das Gmail-Profil des Tokens `expectedMailbox` ist. Bei 5xx oder
   Verbindungsabbruch kein zweiter Versuch (der Entwurf kann trotzdem entstanden sein), Fehler mit „NICHT wiederholen“.
 
+## Google-Dienstkonto-Schlüssel als Wert (ab v1.8.0)
+
+Der Schlüssel muss nicht mehr als Datei liegen (S40 „Google-Schlüssel ohne Datei“): Er kommt z. B. per
+`opDocumentGet` aus 1Password und bleibt im Speicher.
+
+```js
+import { waehleToken } from 'access-client/op-token';
+import { opDocumentGet } from 'access-client/op-read';
+import { parseServiceAccountKey, getDelegatedToken } from 'access-client/google-auth';
+
+const { token } = waehleToken(['~/.config/op/jobs.token']);
+const buf = await opDocumentGet({ vault: 'team-office', item: 'sa-jobs', token });
+let key;
+try { key = parseServiceAccountKey(buf, { clientId: '1000…' }); } finally { buf.fill(0); }
+const at = await getDelegatedToken({ key, sub: 'postfach@example.org', scopes: ['https://www.googleapis.com/auth/gmail.readonly'] });
+```
+
+- `parseServiceAccountKey(wert, { clientId? })`: Objekt, JSON-Text oder Buffer → flache Kopie. Prüft nur die Form
+  (`type` = `service_account`, `client_email`, `private_key`) und mit `clientId` das richtige Konto. Meldungen
+  nennen nie den Inhalt (auch nicht die Meldung von `JSON.parse`). Den Buffer nullt der Aufrufer.
+- `getDelegatedToken({ key, sub, scopes, … })` und `getServiceAccountToken({ key, scopes, … })`: `key` statt `datei`,
+  genau eins von beiden (beides → Abbruch vor jedem Abruf). `datei` bleibt wie bisher.
+- `getAccessToken()` (Sheets, Drive): `GOOGLE_SERVICE_ACCOUNT_KEY` (JSON-Text) statt `GOOGLE_SERVICE_ACCOUNT_FILE`,
+  auch für Kindprozesse, die die Umgebung erben; beide zugleich → Abbruch. `GOOGLE_SERVICE_ACCOUNT_SCOPES` gilt
+  für beide. Ohne beide Variablen wie bisher der Inhaber-Token.
+- Caches hängen am Fingerabdruck (SHA-256 über `client_email` und `private_key`), nicht am Wert: ein anderer
+  Schlüssel bekommt nie das Token des vorigen, auch bei gleichem Kontonamen.
+- Grenze: Ein Wert in der Umgebung ist für denselben Benutzer lesbar (`/proc/<pid>/environ`), wie eine Datei im
+  Laufordner; gewonnen ist, dass nichts auf einen Datenträger und nichts aufzuräumen bleibt. Kindprozesse, die den
+  Schlüssel nicht brauchen, bekommen die Variable nicht (Sache des Aufrufers).
+
 ## 1Password lesen: `op-read`
 
 ```js
@@ -105,6 +136,11 @@ const suche = tresorSuche({ vaultGet: vaultGetMit(token), prefix: 'team-' });
 - `opItemOtp({ vault, itemId, token })` → `Buffer` mit dem aktuellen Einmal-Code (nur Ziffern), nur über die
   Eintrags-ID aus `opItemHead`.
 - Nur für Text-Geheimnisse: `op read` gibt Binärdateien verfälscht aus.
+- `opDocumentGet({ vault, item, token, maxBytes? })` → `Buffer` (ab v1.8.0): `op document get <eintrag> --vault
+  <tresor>`, Bytes unverändert, nie leer, ohne `--out-file` (der Inhalt landet nie in einer Datei). Standardlimit
+  1 MiB. Gleiche Regeln wie `opRead` (Umgebung, Prüfung der Namen, Fehlerklassen, stdout nie in Meldungen). Ein
+  Dokument-Eintrag hat genau eine Datei; eine an einen anderen Eintrag angehängte Datei liest `opRead` über
+  `op://<Tresor>/<Eintrag>/<Dateiname>`.
 
 ## access-read: Mails, Drive und Sheets nur lesen
 
@@ -337,6 +373,9 @@ mail-guard accept  --mailbox <adresse> --fingerprint "<abdruck>" [--state-dir <o
   `allowedScopes` (gemessen an der Token-Antwort, sonst per tokeninfo); neu `grantedScopesOf`, `assertScopesWithin`.
 - `op-vault`: das Präfix der zweiten Schreibweise ist Parameter (`schreibweisen(name, { prefix })`,
   `tresorSuche({ vaultGet, prefix })`); ohne Präfix gibt es nur die konfigurierte Schreibweise.
+- neu (v1.8.0) Dienstkonto-Schlüssel als Wert (S40 „Google-Schlüssel ohne Datei“): `parseServiceAccountKey`, `key`
+  in `getDelegatedToken` und `getServiceAccountToken`, `GOOGLE_SERVICE_ACCOUNT_KEY` in `getAccessToken`; in `op-read`
+  `opDocumentGet`. Pfade und `GOOGLE_SERVICE_ACCOUNT_FILE` unverändert.
 - neu (v1.6.0) `access-read access [--check]` (Diagnose der Zugänge, S110 (Diagnose Konten und Scopes)) und in `op-read` `opVaultList`, `opWhoami`.
 - v1.7.0: `access-read access --check` prüft gleichzeitig mit Gesamtzeitlimit 30 s und zeigt den Namen des Service
   Accounts (`opSelf`) (S146 (access-read access: schneller und Register-Lücken)).
